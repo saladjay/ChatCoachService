@@ -1,0 +1,6 @@
+[submodule "core/llm_adapter"]
+	path = core/llm_adapter
+	url = git@gitlab.zhizitech.org:ai/llmadapter.git
+[submodule "core/user_profile"]
+	path = core/user_profile
+	url = git@gitlab.zhizitech.org:ai/chatcoachuserprofile.git
