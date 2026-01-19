@@ -176,7 +176,7 @@ def create_request(user_id: str, quality: str) -> GenerateReplyRequest:
         user_id=user_id or "test_user",
         target_id="target_123",
         conversation_id="conv_123",
-        language="zh-CN",
+        language="en",  # Default to English
         quality=quality,
         force_regenerate=False,
     )

@@ -65,6 +65,11 @@ class SceneAnalysisInput(BaseModel):
     conversation_id: str
     history_dialog: list[Message] = Field(default_factory=list)
     emotion_trend: EmotionSummary | None = None
+    history_topic_summary: str = ""  # 历史对话话题总结
+    current_conversation_summary: str = ""  # 当前对话总结
+    current_conversation: list[Message] = Field(default_factory=list)  # 当前对话
+    intimacy_value: int = Field(default=50, ge=0, le=101)  # 用户设置的亲密度
+    current_intimacy_level: int = Field(default=50, ge=0, le=101)  # 当前分析的亲密度
 
 
 class SceneAnalysisResult(BaseModel):
@@ -72,9 +77,12 @@ class SceneAnalysisResult(BaseModel):
 
     relationship_state: Literal["破冰", "推进", "冷却", "维持",
                                 "ignition","propulsion","ventilation","equilibrium"]
-    scenario: str
-    intimacy_level: int = Field(ge=0, le=101)
-    risk_flags: list[str] = Field(default_factory=list)
+    scenario: str  # 推荐情景（从 recommended_scenario 获取）
+    intimacy_level: int = Field(ge=0, le=101)  # 用户设置的亲密度
+    risk_flags: list[str] = Field(default_factory=list)  # 基于亲密度差异的风险标记
+    current_scenario: str = ""  # 当前情景（安全/低风险策略|平衡/中风险策略|高风险/高回报策略|关系修复策略|禁止的策略）
+    recommended_scenario: str = ""  # 推荐情景
+    recommended_strategies: list[str] = Field(default_factory=list)  # 推荐的对话策略（3个策略代码）
 
 
 class PersonaInferenceInput(BaseModel):
@@ -95,6 +103,7 @@ class ReplyGenerationInput(BaseModel):
     scene: SceneAnalysisResult
     persona: PersonaSnapshot
     reply_sentence: str = ""  # 客户选择由你回复的一句话（默认为空）
+    language: str = "en"  # 生成回复的语言（默认英语，支持 en/ar/pt/es 等）
 
 
 class LLMResult(BaseModel):

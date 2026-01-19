@@ -34,7 +34,7 @@ async def call_generate_api():
         "user_id": "user_123",
         "target_id": "target_456",
         "conversation_id": "conv_789",
-        "language": "zh-CN",
+        "language": "en",  # Supports: en, ar, pt, es, zh-CN
         "quality": "normal",
         "force_regenerate": False
     }

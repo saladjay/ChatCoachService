@@ -50,12 +50,19 @@ class LLMAdapterReplyGenerator(BaseReplyGenerator):
         # Extract scene information
         scenario = scene.scenario
         intimacy_level = scene.intimacy_level
+        recommended_strategies = ", ".join(scene.recommended_strategies) if scene.recommended_strategies else "无特定策略"
+        current_scenario = scene.current_scenario
+        recommended_scenario = scene.recommended_scenario
 
         # Extract persona information
         persona_snapshot_prompt = persona.prompt
         
         # Get reply sentence from input (default to empty if not provided)
         reply_sentence = getattr(input, 'reply_sentence', '')
+        
+        # Get language from input (must be provided, no default fallback)
+        # Language should always come from request to ensure consistency
+        language = input.language
 
         # Build the complete prompt
         prompt = CHATCOACH_PROMPT.format(
@@ -66,7 +73,11 @@ class LLMAdapterReplyGenerator(BaseReplyGenerator):
             conversation=conversation,
             conversation_summary=conversation_summary,
             persona_snapshot_prompt=persona_snapshot_prompt,
-            reply_sentence=reply_sentence
+            reply_sentence=reply_sentence,
+            language=language,
+            recommended_strategies=recommended_strategies,
+            current_scenario=current_scenario,
+            recommended_scenario=recommended_scenario,
         )
         
         # Create LLM call

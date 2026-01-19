@@ -161,28 +161,17 @@ class Orchestrator:
             print(type(context), type(self.context_builder))
             print("step 1:", context)
             
-            # Step 2: Analyze scene
+            # Step 2: Analyze scene (传递 context 以获取当前亲密度)
             scene = await self._execute_step(
                 exec_ctx,
                 "scene_analysis",
                 self._analyze_scene,
                 request,
+                context,  # 传递 context
             )
             print(type(scene), type(self.scene_analyzer))
-            # scene: Literal["破冰", "推进", "冷却", "维持"]
-            # intimacy_level: int = Field(ge=1, le=5)
-            # risk_flags: list[str] = Field(default_factory=list)
-            scene.intimacy_level = request.intimacy_value
-            if context.current_intimacy_level < scene.intimacy_level < 40:
-                scene.scene = "破冰"
-            elif 40 < context.current_intimacy_level < scene.intimacy_level < 70:
-                scene.scene = "推进"
-            elif 70 < context.current_intimacy_level < scene.intimintimacy_levelacy < 101:
-                scene.scene = "推进"
-            elif scene.intimacy_level < context.current_intimacy_level:
-                scene.scene = "冷却"
-            scene.risk_flags = context.risk_flags
             print("step 2:", scene)
+            
             # Step 3: Infer persona
             persona = await self._execute_step(
                 exec_ctx,
@@ -321,12 +310,14 @@ class Orchestrator:
 
     async def _analyze_scene(
         self, 
-        request: GenerateReplyRequest
+        request: GenerateReplyRequest,
+        context: ContextResult,
     ) -> SceneAnalysisResult:
         """Analyze conversation scene.
         
         Args:
             request: The generation request.
+            context: Context result with current intimacy level.
         
         Returns:
             SceneAnalysisResult from scene analyzer.
@@ -336,6 +327,8 @@ class Orchestrator:
             conversation_id=request.conversation_id,
             history_dialog=messages,
             emotion_trend=None,
+            intimacy_value=request.intimacy_value,  # 用户设置的亲密度
+            current_intimacy_level=context.current_intimacy_level,  # 当前分析的亲密度
         )
         return await self.scene_analyzer.analyze_scene(input_data)
 
@@ -356,7 +349,7 @@ class Orchestrator:
         input_data = PersonaInferenceInput(
             user_id=request.user_id,
             conversation_id=request.conversation_id,
-            scene=scene.scenario,  # 使用 scenario 字段而不是 scene
+            scene=scene.recommended_scenario,  # 使用推荐场景
             history_dialog=self._dialogs_to_messages(request.dialogs),
         )
         return await self.persona_inferencer.infer_persona(input_data)
@@ -399,6 +392,7 @@ class Orchestrator:
                     context=context,
                     scene=scene,
                     persona=persona,
+                    language=request.language,  # 传递语言参数
                 )
                 print('reply_generator', type(self.reply_generator))
                 reply_result = await self._execute_step(

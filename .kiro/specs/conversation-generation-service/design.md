@@ -60,7 +60,7 @@ class GenerateReplyRequest(BaseModel):
     user_id: str
     target_id: str
     conversation_id: str
-    language: str = "zh-CN"
+    language: str = "en"  # Default to English (supports en/ar/pt/es/zh-CN)
     quality: Literal["cheap", "normal", "premium"] = "normal"
     force_regenerate: bool = False
 

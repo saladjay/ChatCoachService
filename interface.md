@@ -35,7 +35,7 @@
 | `user_id` | string | ✅ | - | 用户ID |
 | `target_id` | string | ✅ | - | 目标用户ID |
 | `conversation_id` | string | ✅ | - | 对话ID |
-| `language` | string | ❌ | `"zh-CN"` | 语言代码 |
+| `language` | string | ❌ | `"en"` | 语言代码 (en/ar/pt/es/zh-CN) |
 | `quality` | string | ❌ | `"normal"` | 质量等级: `"cheap"` \| `"normal"` \| `"premium"` |
 | `force_regenerate` | boolean | ❌ | `false` | 是否强制重新生成 |
 
@@ -45,7 +45,7 @@
   "user_id": "user123",
   "target_id": "target456",
   "conversation_id": "conv789",
-  "language": "zh-CN",
+  "language": "en",
   "quality": "normal",
   "force_regenerate": false
 }

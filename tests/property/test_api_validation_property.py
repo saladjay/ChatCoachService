@@ -24,7 +24,7 @@ valid_id_strategy = st.text(
 
 quality_strategy = st.sampled_from(["cheap", "normal", "premium"])
 
-language_strategy = st.sampled_from(["zh-CN", "en-US", "ja-JP", "ko-KR"])
+language_strategy = st.sampled_from(["en", "ar", "pt", "es", "zh-CN"])  # Supported languages
 
 
 class TestRequestValidationConsistency:

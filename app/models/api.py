@@ -16,7 +16,7 @@ class GenerateReplyRequest(BaseModel):
     user_id: str = Field(..., min_length=1, description="User identifier")
     target_id: str = Field(..., min_length=1, description="Target user identifier")
     conversation_id: str = Field(..., min_length=1, description="Conversation identifier")
-    language: str = Field(default="zh-CN", description="Language code")
+    language: str = Field(default="en", description="Language code (en/ar/pt/es/zh-CN)")
     quality: Literal["cheap", "normal", "premium"] = Field(
         default="normal", description="Quality tier for LLM selection"
     )
