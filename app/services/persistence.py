@@ -14,8 +14,10 @@ from datetime import datetime
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import desc
 
 from app.db.models import (
+    ConversationSummaryLog,
     GenerationResultModel,
     IntimacyCheckLog,
     LLMCallLog,
@@ -203,6 +205,43 @@ class PersistenceService:
         self._session.add(result)
         await self._session.flush()
         return result.id
+
+    async def save_conversation_summary(
+        self,
+        user_id: str,
+        target_id: str,
+        conversation_id: str,
+        summary: str,
+    ) -> int:
+        log = ConversationSummaryLog(
+            user_id=user_id,
+            target_id=target_id,
+            conversation_id=conversation_id,
+            summary=summary,
+        )
+        self._session.add(log)
+        await self._session.flush()
+        return log.id
+
+    async def list_conversation_summaries(
+        self,
+        user_id: str,
+        target_id: str,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[ConversationSummaryLog]:
+        stmt = (
+            select(ConversationSummaryLog)
+            .where(
+                ConversationSummaryLog.user_id == user_id,
+                ConversationSummaryLog.target_id == target_id,
+            )
+            .order_by(desc(ConversationSummaryLog.created_at))
+            .limit(limit)
+            .offset(offset)
+        )
+        result = await self._session.execute(stmt)
+        return list(result.scalars().all())
 
 
     # Retrieval methods

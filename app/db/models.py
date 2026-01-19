@@ -30,6 +30,19 @@ class Dialog(Base):
     dialogs: Mapped[list[Dict[str, Any]]] = mapped_column(JSON, nullable=False, default=list)
 
 
+class ConversationSummaryLog(Base):
+    __tablename__ = "conversation_summary_log"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    target_id: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    conversation_id: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    summary: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, server_default=func.now()
+    )
+
+
 class SceneAnalysisLog(Base):
     """Log of scene analysis results."""
 

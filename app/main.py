@@ -250,7 +250,9 @@ def register_routes(app: FastAPI) -> None:
     
     # Register API routes
     from app.api.generate import router as generate_router
+    from app.api.context import router as context_router
     app.include_router(generate_router, prefix=settings.api_prefix)
+    app.include_router(context_router, prefix=settings.api_prefix)
 
 
 # Create the application instance

@@ -47,7 +47,7 @@ from app.services.base import (
 )
 from app.services.billing import BillingService
 from app.services.fallback import FallbackStrategy
-
+from app.services.persistence import PersistenceService
 
 logger = logging.getLogger(__name__)
 
@@ -90,6 +90,7 @@ class Orchestrator:
         reply_generator: BaseReplyGenerator,
         intimacy_checker: BaseIntimacyChecker,
         billing_service: BillingService,
+        persistence_service: PersistenceService | None = None,
         config: OrchestratorConfig | None = None,
         billing_config: BillingConfig | None = None,
     ):
@@ -102,6 +103,7 @@ class Orchestrator:
             reply_generator: Service for generating replies.
             intimacy_checker: Service for checking reply appropriateness.
             billing_service: Service for tracking costs.
+            persistence_service: Optional service for persisting conversation summaries.
             config: Orchestrator configuration (retry, timeout settings).
             billing_config: Billing configuration (cost limits).
         """
@@ -111,6 +113,7 @@ class Orchestrator:
         self.reply_generator = reply_generator
         self.intimacy_checker = intimacy_checker
         self.billing_service = billing_service
+        self.persistence_service = persistence_service
         self.config = config or OrchestratorConfig()
         self.billing_config = billing_config or BillingConfig()
 
@@ -299,7 +302,17 @@ class Orchestrator:
                 emotion_trend=None,
             )
             print("_build_context", request.dialogs, type(self.context_builder))
-            return await self.context_builder.build_context(input_data)
+            result = await self.context_builder.build_context(input_data)
+
+            if self.persistence_service is not None and result.conversation_summary:
+                await self.persistence_service.save_conversation_summary(
+                    user_id=request.user_id,
+                    target_id=request.target_id,
+                    conversation_id=request.conversation_id,
+                    summary=result.conversation_summary,
+                )
+
+            return result
         except Exception as e:
             
             print(traceback.format_exc())
@@ -387,6 +400,7 @@ class Orchestrator:
             try:
                 # Generate reply
                 reply_input = ReplyGenerationInput(
+                    user_id=request.user_id,
                     prompt=f"Generate a reply for conversation {request.conversation_id}",
                     quality=quality,
                     context=context,

@@ -5,6 +5,7 @@ from app.models.schemas import (
 from app.services.base import BaseReplyGenerator
 from app.services.llm_adapter import BaseLLMAdapter, LLMCall
 from app.services.prompt import CHATCOACH_PROMPT
+from app.services.user_profile_impl import BaseUserProfileService
 
 
 class LLMAdapterReplyGenerator(BaseReplyGenerator):
@@ -16,7 +17,12 @@ class LLMAdapterReplyGenerator(BaseReplyGenerator):
     Requirements: 3.3
     """
     
-    def __init__(self, llm_adapter: BaseLLMAdapter, user_id: str = "system"):
+    def __init__(
+        self,
+        llm_adapter: BaseLLMAdapter,
+        user_profile_service: BaseUserProfileService,
+        user_id: str = "system",
+    ):
         """Initialize with an LLM Adapter.
         
         Args:
@@ -25,6 +31,7 @@ class LLMAdapterReplyGenerator(BaseReplyGenerator):
         """
         self.llm_adapter = llm_adapter
         self.user_id = user_id
+        self.user_profile_service = user_profile_service
 
     async def generate_reply(self, input: ReplyGenerationInput) -> LLMResult:
         """Generate a reply using the LLM Adapter.
@@ -55,7 +62,20 @@ class LLMAdapterReplyGenerator(BaseReplyGenerator):
         recommended_scenario = scene.recommended_scenario
 
         # Extract persona information
-        persona_snapshot_prompt = persona.prompt
+        persona_snapshot_prompt = await self.user_profile_service.serialize_to_prompt(
+            user_id=input.user_id,
+            max_tokens=500,
+            language="zh",
+        )
+        if persona_snapshot_prompt is None:
+            await self.user_profile_service.create_profile(input.user_id)
+            persona_snapshot_prompt = await self.user_profile_service.serialize_to_prompt(
+                user_id=input.user_id,
+                max_tokens=500,
+                language="zh",
+            )
+        if persona_snapshot_prompt is None:
+            persona_snapshot_prompt = "（用户画像暂无）"
         
         # Get reply sentence from input (default to empty if not provided)
         reply_sentence = getattr(input, 'reply_sentence', '')
@@ -85,7 +105,7 @@ class LLMAdapterReplyGenerator(BaseReplyGenerator):
             task_type="generation",
             prompt=prompt,
             quality=input.quality,
-            user_id=self.user_id,
+            user_id=input.user_id,
             provider='dashscope',
             model='qwen-flash'
         )

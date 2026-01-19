@@ -66,7 +66,8 @@ def get_persistence_service(
 
 
 def get_orchestrator(
-    container: Annotated[ServiceContainer, Depends(get_service_container)]
+    container: Annotated[ServiceContainer, Depends(get_service_container)],
+    persistence_service: Annotated[PersistenceService, Depends(get_persistence_service)],
 ) -> Orchestrator:
     """Get the orchestrator service dependency.
     
@@ -78,7 +79,7 @@ def get_orchestrator(
     
     Requirements: 7.1
     """
-    return container.create_orchestrator()
+    return container.create_orchestrator(persistence_service=persistence_service)
 
 
 def get_billing_service(

@@ -97,6 +97,7 @@ class PersonaInferenceInput(BaseModel):
 class ReplyGenerationInput(BaseModel):
     """Input for the reply generation service."""
 
+    user_id: str
     prompt: str
     quality: Literal["cheap", "normal", "premium"] = "normal"
     context: ContextResult

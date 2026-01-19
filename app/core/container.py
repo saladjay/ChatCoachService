@@ -41,6 +41,7 @@ from app.services.user_profile_impl import (
     UserProfileService,
     UserProfilePersonaInferencer,
 )
+from app.services.persistence import PersistenceService
 
 
 T = TypeVar("T")
@@ -260,7 +261,8 @@ class ServiceContainer:
             return MockReplyGenerator()
         # Real implementation uses LLM Adapter
         llm_adapter = self.get("llm_adapter")
-        return LLMAdapterReplyGenerator(llm_adapter)
+        user_profile_service = self.get("user_profile_service")
+        return LLMAdapterReplyGenerator(llm_adapter, user_profile_service)
 
     def _create_intimacy_checker(self) -> BaseIntimacyChecker:
         """Create intimacy checker based on mode.
@@ -351,7 +353,10 @@ class ServiceContainer:
         self._initialize_services()
         return self.get("user_profile_service")
 
-    def create_orchestrator(self) -> Orchestrator:
+    def create_orchestrator(
+        self,
+        persistence_service: PersistenceService | None = None,
+    ) -> Orchestrator:
         """Create an orchestrator with all required dependencies.
         
         Returns:
@@ -375,6 +380,7 @@ class ServiceContainer:
             reply_generator=self.get_reply_generator(),
             intimacy_checker=self.get_intimacy_checker(),
             billing_service=self.get_billing_service(),
+            persistence_service=persistence_service,
             config=orchestrator_config,
             billing_config=self.config.billing,
         )
