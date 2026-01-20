@@ -35,6 +35,7 @@ from app.services.llm_adapter import (
     LLMAdapterImpl,
     create_llm_adapter,
 )
+from app.services.logging_llm_adapter import LoggingLLMAdapter
 from app.services.reply_generator_impl import LLMAdapterReplyGenerator
 from app.services.user_profile_impl import (
     BaseUserProfileService,
@@ -194,7 +195,10 @@ class ServiceContainer:
         Requirements: 3.3
         """
         # Use the real LLM Adapter implementation from over-seas-llm-platform-service
-        return create_llm_adapter()
+        adapter = create_llm_adapter()
+        if self.config.trace.enabled:
+            return LoggingLLMAdapter(adapter)
+        return adapter
 
     def _create_user_profile_service(self) -> BaseUserProfileService:
         """Create UserProfile Service.

@@ -24,6 +24,7 @@ from app.services.base import (
 from app.services.billing import BillingService
 from app.services.orchestrator import Orchestrator
 from app.services.persistence import PersistenceService
+from app.services.user_profile_impl import BaseUserProfileService
 
 
 def get_service_container() -> ServiceContainer:
@@ -146,6 +147,12 @@ def get_persona_inferencer(
     return container.get_persona_inferencer()
 
 
+def get_user_profile_service(
+    container: Annotated[ServiceContainer, Depends(get_service_container)]
+) -> BaseUserProfileService:
+    return container.get_user_profile_service()
+
+
 def get_reply_generator(
     container: Annotated[ServiceContainer, Depends(get_service_container)]
 ) -> BaseReplyGenerator:
@@ -185,6 +192,7 @@ BillingServiceDep = Annotated[BillingService, Depends(get_billing_service)]
 ContextBuilderDep = Annotated[BaseContextBuilder, Depends(get_context_builder)]
 SceneAnalyzerDep = Annotated[BaseSceneAnalyzer, Depends(get_scene_analyzer)]
 PersonaInferencerDep = Annotated[BasePersonaInferencer, Depends(get_persona_inferencer)]
+UserProfileServiceDep = Annotated[BaseUserProfileService, Depends(get_user_profile_service)]
 ReplyGeneratorDep = Annotated[BaseReplyGenerator, Depends(get_reply_generator)]
 IntimacyCheckerDep = Annotated[BaseIntimacyChecker, Depends(get_intimacy_checker)]
 DbSessionDep = Annotated[AsyncSession, Depends(get_db_session)]

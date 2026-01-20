@@ -48,6 +48,17 @@ class DatabaseConfig(BaseSettings):
     echo: bool = False
 
 
+class TraceConfig(BaseSettings):
+    """Trace logging configuration (step inputs/outputs + LLM prompts)."""
+
+    model_config = SettingsConfigDict(env_prefix="TRACE_")
+
+    enabled: bool = False
+    level: Literal["error", "info", "debug"] = "info"
+    file_path: str = "logs/trace.jsonl"
+    log_llm_prompt: bool = True
+
+
 class AppConfig(BaseSettings):
     """Main application configuration."""
     
@@ -79,6 +90,7 @@ class AppConfig(BaseSettings):
     orchestrator: OrchestratorConfig = OrchestratorConfig()
     billing: BillingConfig = BillingConfig()
     database: DatabaseConfig = DatabaseConfig()
+    trace: TraceConfig = TraceConfig()
 
 
 # Global configuration instance

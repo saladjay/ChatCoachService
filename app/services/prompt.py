@@ -1,5 +1,5 @@
 from enum import Enum
-__all__ = ['PREFERENCE_ANALYSIS_PROMPT', 'SCENARIO_ANALYSIS_PROMPT']
+__all__ = ['PREFERENCE_ANALYSIS_PROMPT', 'SCENARIO_ANALYSIS_PROMPT', 'TRAIT_DISCOVERY_PROMPT', 'STANDARD_TRAITS', 'TRAIT_MAPPING_PROMPT']
 
 PREFERENCE_ANALYSIS_PROMPT = """分析以下对话，提取用户的沟通偏好特征。
 
@@ -72,9 +72,8 @@ SCENARIO_ANALYSIS_PROMPT = """你是一个对话场景分析专家。请根据�
     "confidence": 0.0-1.0,
     "analysis": "简要分析说明"
 }}
+
 """
-
-
 
 SCENARIO_PROMPT = """你是一个专业的社交互动分析师，擅长识别和分类对话中使用的沟通策略。请根据以下分类体系，分析对话中user所使用的策略类型以及当前对话的适合的三个策略。
 ## 策略分类体系
@@ -121,7 +120,7 @@ SCENARIO_PROMPT = """你是一个专业的社交互动分析师，擅长识别�
 |sexual_hint| 性暗示 - 含蓄或直接的性相关暗示，用于快速测试化学吸引力与边界 |"你这身衣服让人有点分心" ,"昨晚梦到你了，内容不太适合现在说","你知不知道你这样笑的时候，有点危险"|
 |dominant_lead |主导引领 - 以强势姿态带领互动方向，展示领导力与控制力| "听我的，选那家餐厅你不会后悔","周六晚上7点，我去接你"（而非询问），"把手给我，带你去个地方"|
 |strong_frame_control| 强框架控制 - 坚持自己的规则和边界，不轻易妥协立场| "我从来不允许别人迟到超过10分钟","在我的世界里，承诺就是一切","我选择伴侣的标准很明确，第一条就是..."|
-|bold_assumption| 大胆假设 - 直接假设亲密关系状态，跨越常规进展阶段| "下次见我父母时，你得穿正式点","我们以后的家一定要有个大书房","你生气时还挺可爱的，以后得常惹你"|
+|bold_assumption| 大胆假设 - 直接假设亲密关系状态，跨越常规进展阶段| "下次见我父母时，你得穿正式点","我们以后家一定要有个大书房","你生气时还挺可爱的，以后得常惹你"|
 |fast_escalation |快速升级 - 加速关系进展节奏，压缩正常发展时间线 |初次约会结束即尝试亲吻，认识一周即讨论同居可能性，在未确定关系时使用亲密昵称如"宝贝"|
 |taboo_play| 禁忌游戏 - 有意触及社会或个人的敏感禁忌话题 |"你前任最让你受不了的是什么？","说说你做过最疯狂的事","如果我们私奔，你想去哪？"|
 |polarity_push| 极性推动 - 刻意引发强烈爱恨反应，创造情绪波动 |突然冷淡后再极度热情，"有时候我真受不了你，但又离不开"，故意唱反调引发辩论再安抚|
@@ -156,6 +155,7 @@ SCENARIO_PROMPT = """你是一个专业的社交互动分析师，擅长识别�
     "recommended_scenario": "安全/低风险策略|平衡/中风险策略|高风险/高回报策略|关系修复策略|禁止的策略",
     "recommended_strategy": "Three Strategy Codes",
 }}
+
 """
 
 class ChatEmotionState(Enum):
@@ -209,8 +209,8 @@ CONTEXT_SUMMARY_PROMPT = """你是一个对话场景分析专家。请根据以�
     "current_intimacy_level": "陌生期|熟悉期|亲密期|修复期",
     "scenario": "SAFE|BALANCED|RISKY|RECOVERY|NEGATIVE"
 }}
-"""
 
+"""
 
 CHATCOACH_PROMPT = """你是专业的恋爱聊天教练，专门帮助用户优化与心仪对象的聊天对话。你精通人际关系心理学、沟通技巧和情感智慧，能够根据具体情境提供精准的聊天建议。
 
@@ -244,6 +244,14 @@ CHATCOACH_PROMPT = """你是专业的恋爱聊天教练，专门帮助用户优�
 
 ## 用户画像
 {persona_snapshot_prompt}
+
+## 用户互动策略（由系统根据 trait_vector 编译）
+{policy_block}
+
+约束说明（必须遵守）：
+1. 若与安全/合规或明确禁止事项冲突：以安全/合规与禁止事项为最高优先级。
+2. `policy_block` 主要约束回复的表达风格（长度、结构、直接性等），应尽量全部落实。
+3. `{recommended_strategies}` 主要约束“对话推进手法”，在不违反 `policy_block` 的前提下优先使用。
 
 ## 客户选择由你回复的一句话
 {reply_sentence}
@@ -283,5 +291,94 @@ CHATCOACH_PROMPT = """你是专业的恋爱聊天教练，专门帮助用户优�
     "overall_advice": "整体建议：当前对话的注意事项和建议"
 }}
 
-注意：所有回复内容（text字段）必须使用 {language} 语言生成。
+注意：所有回复内容（text字段）必须使用 {language} 语言生成.
+
+"""
+
+TRAIT_DISCOVERY_PROMPT = """你是一个用户画像研究助手。
+
+给定用户的多轮对话记录，请你完成：
+
+任务 1：自由归纳用户在“表达方式、认知风格、决策方式、互动偏好”上的稳定特征
+- 不使用任何预设标签体系
+- 每个特征必须是抽象概念，不是具体行为
+- 每个特征必须包含：trait_name(2-10字), description(一句话概括), evidence(一句行为证据), confidence(0.0-1.0)
+
+任务 2：判断这些特征中，哪些是：
+- 通用型特征（可用于很多用户）
+- 个性型特征（高度个性化）
+
+对话内容：
+{conversation}
+
+请严格输出 JSON（不要输出 markdown 代码块，不要输出额外解释）：
+{{
+  "general_traits": [
+    {{"trait_name": "...", "description": "...", "evidence": "...", "confidence": 0.0}}
+  ],
+  "personal_traits": [
+    {{"trait_name": "...", "description": "...", "evidence": "...", "confidence": 0.0}}
+  ]
+}}
+
+"""
+
+STANDARD_TRAITS = [
+    "depth_preference",
+    "abstraction_level",
+    "learning_speed",
+    "reflection_tendency",
+    "logic_vs_intuition",
+    "structure_need",
+    "example_need",
+    "brevity_preference",
+    "directness_level",
+    "emotional_expression",
+    "initiative_level",
+    "feedback_sensitivity",
+    "control_preference",
+    "engagement_stability",
+    "intimacy_comfort",
+    "risk_tolerance",
+    "decision_speed",
+    "certainty_need",
+    "exploration_tendency",
+    "consistency_preference",
+    "openness",
+    "agreeableness",
+    "dominance",
+    "patience",
+    "self_disclosure",
+]
+
+TRAIT_MAPPING_PROMPT = """现在系统有一套标准用户特征集合：
+
+{standard_traits}
+
+给定新发现的特征列表，请你对每个特征判断：
+
+1. 是否可以映射到某个标准特征？
+2. 如果可以，选择 action=MAP，并填写 target_trait
+3. 如果不能但值得保留，选择 action=NEW，并填写 new_trait_name
+4. 如果不稳定/不重要/过于场景化，选择 action=DISCARD
+
+补充规则：
+- 当 action=MAP 时，必须输出 inferred_value（0.0-1.0），表示该标准特征应被推断到的数值
+- 当 action=NEW 或 action=DISCARD 时，inferred_value 请输出 null
+
+输入特征列表（JSON）：
+{traits_json}
+
+请严格输出 JSON 数组（不要输出 markdown 代码块，不要输出额外解释）：
+[
+  {{
+    "original_trait_name": "...",
+    "action": "MAP" | "NEW" | "DISCARD",
+    "target_trait": "...",
+    "new_trait_name": "...",
+    "inferred_value": 0.0,
+    "confidence": 0.0,
+    "reason": "..."
+  }}
+]
 """

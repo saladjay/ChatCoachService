@@ -12,6 +12,7 @@ import traceback
 import asyncio
 import logging
 import time
+import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Literal
@@ -48,6 +49,7 @@ from app.services.base import (
 from app.services.billing import BillingService
 from app.services.fallback import FallbackStrategy
 from app.services.persistence import PersistenceService
+from app.observability.trace_logger import trace_logger
 
 logger = logging.getLogger(__name__)
 
@@ -244,6 +246,21 @@ class Orchestrator:
         
         Requirements: 2.5
         """
+        step_id = uuid.uuid4().hex
+        trace_logger.log_event(
+            {
+                "level": "debug",
+                "type": "step_start",
+                "step_id": step_id,
+                "step_name": step_name,
+                "user_id": exec_ctx.user_id,
+                "conversation_id": exec_ctx.conversation_id,
+                "quality": exec_ctx.quality,
+                "args": args,
+                "kwargs": kwargs,
+            }
+        )
+
         start_time = time.time()
         try:
             result = await asyncio.wait_for(
@@ -251,6 +268,18 @@ class Orchestrator:
                 timeout=self.config.timeout_seconds,
             )
             duration_ms = int((time.time() - start_time) * 1000)
+            trace_logger.log_event(
+                {
+                    "level": "debug",
+                    "type": "step_end",
+                    "step_id": step_id,
+                    "step_name": step_name,
+                    "user_id": exec_ctx.user_id,
+                    "conversation_id": exec_ctx.conversation_id,
+                    "duration_ms": duration_ms,
+                    "result": result,
+                }
+            )
             exec_ctx.step_logs.append(StepExecutionLog(
                 step_name=step_name,
                 status="success",
@@ -259,6 +288,18 @@ class Orchestrator:
             return result
         except asyncio.TimeoutError:
             duration_ms = int((time.time() - start_time) * 1000)
+            trace_logger.log_event(
+                {
+                    "level": "error",
+                    "type": "step_error",
+                    "step_id": step_id,
+                    "step_name": step_name,
+                    "user_id": exec_ctx.user_id,
+                    "conversation_id": exec_ctx.conversation_id,
+                    "duration_ms": duration_ms,
+                    "error": "timeout",
+                }
+            )
             exec_ctx.step_logs.append(StepExecutionLog(
                 step_name=step_name,
                 status="failed",
@@ -268,6 +309,19 @@ class Orchestrator:
             raise
         except Exception as e:
             duration_ms = int((time.time() - start_time) * 1000)
+            trace_logger.log_event(
+                {
+                    "level": "error",
+                    "type": "step_error",
+                    "step_id": step_id,
+                    "step_name": step_name,
+                    "user_id": exec_ctx.user_id,
+                    "conversation_id": exec_ctx.conversation_id,
+                    "duration_ms": duration_ms,
+                    "error": str(e),
+                    "traceback": traceback.format_exc(),
+                }
+            )
             exec_ctx.step_logs.append(StepExecutionLog(
                 step_name=step_name,
                 status="failed",

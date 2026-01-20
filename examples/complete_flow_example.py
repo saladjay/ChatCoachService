@@ -47,6 +47,12 @@ async def main():
     # ========== 步骤 1: 初始化服务容器 ==========
     print("步骤 1: 初始化服务容器")
     print("-" * 80)
+
+    settings.trace.enabled = True
+    settings.trace.level = "debug"
+    settings.trace.log_llm_prompt = True
+    print(f"✓ Trace enabled: file={settings.trace.file_path}")
+    print("✓ LLM prompt files will be written to logs/llm_prompts/<call_id>.txt")
     
     # 创建服务容器（使用 MOCK 模式以避免需要真实的 LLM API）
     container = ServiceContainer(mode=ServiceMode.REAL)

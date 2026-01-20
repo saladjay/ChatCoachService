@@ -1,0 +1,106 @@
+import time
+import uuid
+from pathlib import Path
+from typing import Any
+
+from app.models.schemas import LLMResult
+from app.core.config import settings
+from app.observability.trace_logger import TraceLogger, trace_logger
+from app.services.llm_adapter import BaseLLMAdapter, LLMCall
+
+
+class LoggingLLMAdapter(BaseLLMAdapter):
+    def __init__(
+        self,
+        inner: BaseLLMAdapter,
+        logger: TraceLogger = trace_logger,
+    ):
+        self._inner = inner
+        self._logger = logger
+
+    async def call(self, llm_call: LLMCall) -> LLMResult:
+        call_id = uuid.uuid4().hex
+        start = time.monotonic()
+
+        prompt_file: str | None = None
+        if settings.trace.log_llm_prompt:
+            prompt_dir = Path("logs") / "llm_prompts"
+            prompt_dir.mkdir(parents=True, exist_ok=True)
+            prompt_path = prompt_dir / f"{call_id}.txt"
+            prompt_path.write_text(llm_call.prompt, encoding="utf-8")
+            prompt_file = str(prompt_path)
+
+        prompt_value: str | None
+        if settings.trace.log_llm_prompt:
+            prompt_value = llm_call.prompt
+        else:
+            prompt_value = None
+
+        self._logger.log_event(
+            {
+                "level": "debug",
+                "type": "llm_call_start",
+                "call_id": call_id,
+                "task_type": llm_call.task_type,
+                "user_id": llm_call.user_id,
+                "quality": llm_call.quality,
+                "provider": llm_call.provider,
+                "model": llm_call.model,
+                "prompt": prompt_value,
+                "prompt_len": len(llm_call.prompt),
+                "prompt_file": prompt_file,
+            }
+        )
+
+        try:
+            result = await self._inner.call(llm_call)
+            duration_ms = int((time.monotonic() - start) * 1000)
+            self._logger.log_event(
+                {
+                    "level": "debug",
+                    "type": "llm_call_end",
+                    "call_id": call_id,
+                    "duration_ms": duration_ms,
+                    "provider": result.provider,
+                    "model": result.model,
+                    "input_tokens": result.input_tokens,
+                    "output_tokens": result.output_tokens,
+                    "cost_usd": result.cost_usd,
+                    "text": result.text,
+                    "prompt_file": prompt_file,
+                }
+            )
+            return result
+        except Exception as e:
+            duration_ms = int((time.monotonic() - start) * 1000)
+            self._logger.log_event(
+                {
+                    "level": "error",
+                    "type": "llm_call_error",
+                    "call_id": call_id,
+                    "duration_ms": duration_ms,
+                    "error": str(e),
+                    "prompt_file": prompt_file,
+                }
+            )
+            raise
+
+    async def call_with_provider(
+        self,
+        prompt: str,
+        provider: str,
+        model: str,
+        user_id: str = "system",
+    ) -> LLMResult:
+        llm_call = LLMCall(
+            task_type="generation",
+            prompt=prompt,
+            quality="normal",
+            user_id=user_id,
+            provider=provider,
+            model=model,
+        )
+        return await self.call(llm_call)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._inner, name)
