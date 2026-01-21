@@ -15,6 +15,7 @@ import logging
 import sys
 from datetime import datetime
 from pathlib import Path
+import re
 
 # 添加项目根目录到 Python 路径
 project_root = Path(__file__).parent.parent
@@ -43,7 +44,7 @@ async def main():
     print("对话生成服务 - 完整流程示例")
     print("=" * 80)
     print()
-    
+
     # ========== 步骤 1: 初始化服务容器 ==========
     print("步骤 1: 初始化服务容器")
     print("-" * 80)
@@ -153,32 +154,34 @@ async def main():
         speaker_label = msg.speaker
         print(f"  [{speaker_label}] {msg.content[:50]}...")
     print()
+
+    # ========== 步骤 3.1: 从对话中学习 Traits（用于生成 policy_block） ==========
+    print("步骤 3.1: 从对话中学习 Traits（用于生成 policy_block）")
+    print("-" * 80)
+
+    selected_sentences: list[str] = []
+    for message in messages:
+        parts = [s.strip() for s in re.split(r"[.!?]+\s*", message.content) if s.strip()]
+        selected_sentences.extend(parts)
+    if len(selected_sentences) < 10:
+        selected_sentences.extend([m.content.strip() for m in messages])
+
+    await user_profile_service.learn_new_traits(
+        user_id=user_id,
+        selected_sentences=selected_sentences[:10],
+        provider="dashscope",
+        model="qwen-flash",
+        store=True,
+        map_to_standard=True,
+    )
+
+    print("✓ 已触发 trait 学习（trait_vector 将用于生成 policy_block）")
+    print()
     
     # ========== 步骤 4: 分析对话场景 ==========
     print("步骤 4: 分析对话场景")
     print("-" * 80)
-    
-    # 在 Mock 模式下，不使用 LLM 分析（避免需要真实 API）
-    # 如果需要使用真实 LLM，请将 ServiceMode 改为 REAL 并配置 API 密钥
-    profile = await user_profile_service.analyze_scenario(
-        user_id=user_id,
-        conversation_id=conversation_id,
-        messages=messages,
-        use_llm=True,  # Mock 模式下不使用 LLM
-        provider='dashscope',
-        model='qwen-flash'
-    )
-    
-    if profile.core_profile.session_state and profile.core_profile.session_state.scenario:
-        scenario = profile.core_profile.session_state.scenario
-        print(f"✓ 场景风险等级: {scenario.risk_level.value}")
-        print(f"✓ 关系阶段: {scenario.relationship_stage}")
-        print(f"✓ 情绪基调: {scenario.emotional_tone}")
-        print(f"✓ 推荐策略: {', '.join(scenario.recommended_strategies[:3])}")
-        print(f"✓ 需要回避: {', '.join(scenario.avoid_patterns[:3])}")
-        print(f"✓ 置信度: {scenario.confidence:.2f}")
-    else:
-        print("✓ 使用默认场景分析（Mock 模式）")
+    print("✓ 场景分析将由 Orchestrator 在生成回复时完成（此处不额外调用 LLM）")
     print()
     
     # ========== 步骤 5: 通过 Orchestrator 生成回复 ==========
@@ -200,6 +203,7 @@ async def main():
         language="en",
         quality="normal",  # 使用 normal 质量
         force_regenerate=False,
+        intimacy_value=60,
         dialogs = dialogs
     )
     print(request.dialogs)

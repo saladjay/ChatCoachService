@@ -1103,7 +1103,7 @@ class UserProfileService(BaseUserProfileService):
         if selected_sentences is not None:
             if len(selected_sentences) < 10:
                 raise ValueError("selected_sentences must contain at least 10 sentences")
-            conversation_text = "\n".join([f"用户选择: {s}" for s in selected_sentences])
+            conversation_text = "\n".join([f"User selected: {s}" for s in selected_sentences])
         else:
             messages = messages or []
             if len(messages) < 10:
@@ -1264,9 +1264,30 @@ class UserProfileService(BaseUserProfileService):
         if self._llm_adapter is None:
             raise ValueError("LLM adapter not configured, cannot map traits")
 
+        def _truncate(s: Any, max_len: int) -> str:
+            text = str(s or "")
+            if len(text) <= max_len:
+                return text
+            return text[: max_len - 1] + "…"
+
+        compact_traits: list[dict[str, Any]] = []
+        for t in traits[:15]:
+            if not isinstance(t, dict):
+                continue
+            name = t.get("trait_name")
+            if not name:
+                continue
+            compact_traits.append(
+                {
+                    "trait_name": _truncate(name, 24),
+                    "description": _truncate(t.get("description"), 80),
+                    "confidence": t.get("confidence"),
+                }
+            )
+
         prompt = TRAIT_MAPPING_PROMPT.format(
             standard_traits=json.dumps(CORE_STANDARD_TRAITS, ensure_ascii=False),
-            traits_json=json.dumps(traits, ensure_ascii=False),
+            traits_json=json.dumps(compact_traits, ensure_ascii=False),
         )
         llm_call = LLMCall(
             task_type="persona",

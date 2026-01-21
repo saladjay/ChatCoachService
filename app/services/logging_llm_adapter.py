@@ -1,3 +1,4 @@
+import inspect
 import time
 import uuid
 from pathlib import Path
@@ -21,6 +22,20 @@ class LoggingLLMAdapter(BaseLLMAdapter):
     async def call(self, llm_call: LLMCall) -> LLMResult:
         call_id = uuid.uuid4().hex
         start = time.monotonic()
+
+        caller_info: dict[str, Any] = {}
+        for frame_info in inspect.stack()[1:]:
+            module = str(frame_info.frame.f_globals.get("__name__") or "")
+            if module == __name__:
+                continue
+            if module.startswith("app.services"):
+                caller_info = {
+                    "caller_module": module,
+                    "caller_func": frame_info.function,
+                    "caller_file": frame_info.filename,
+                    "caller_line": frame_info.lineno,
+                }
+                break
 
         prompt_file: str | None = None
         if settings.trace.log_llm_prompt:
@@ -49,6 +64,7 @@ class LoggingLLMAdapter(BaseLLMAdapter):
                 "prompt": prompt_value,
                 "prompt_len": len(llm_call.prompt),
                 "prompt_file": prompt_file,
+                **caller_info,
             }
         )
 
@@ -60,6 +76,11 @@ class LoggingLLMAdapter(BaseLLMAdapter):
                     "level": "debug",
                     "type": "llm_call_end",
                     "call_id": call_id,
+                    "task_type": llm_call.task_type,
+                    "user_id": llm_call.user_id,
+                    "quality": llm_call.quality,
+                    "requested_provider": llm_call.provider,
+                    "requested_model": llm_call.model,
                     "duration_ms": duration_ms,
                     "provider": result.provider,
                     "model": result.model,
@@ -68,6 +89,7 @@ class LoggingLLMAdapter(BaseLLMAdapter):
                     "cost_usd": result.cost_usd,
                     "text": result.text,
                     "prompt_file": prompt_file,
+                    **caller_info,
                 }
             )
             return result
@@ -78,9 +100,15 @@ class LoggingLLMAdapter(BaseLLMAdapter):
                     "level": "error",
                     "type": "llm_call_error",
                     "call_id": call_id,
+                    "task_type": llm_call.task_type,
+                    "user_id": llm_call.user_id,
+                    "quality": llm_call.quality,
+                    "requested_provider": llm_call.provider,
+                    "requested_model": llm_call.model,
                     "duration_ms": duration_ms,
                     "error": str(e),
                     "prompt_file": prompt_file,
+                    **caller_info,
                 }
             )
             raise

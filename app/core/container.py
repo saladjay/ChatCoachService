@@ -37,6 +37,7 @@ from app.services.llm_adapter import (
 )
 from app.services.logging_llm_adapter import LoggingLLMAdapter
 from app.services.reply_generator_impl import LLMAdapterReplyGenerator
+from app.services.scene_analyzer_impl import SceneAnalyzer
 from app.services.user_profile_impl import (
     BaseUserProfileService,
     UserProfileService,
@@ -236,8 +237,8 @@ class ServiceContainer:
         """
         if self._mode == ServiceMode.MOCK:
             return MockSceneAnalyzer()
-        # Real implementation would be returned here when available
-        return MockSceneAnalyzer()
+        llm_adapter = self.get("llm_adapter") if self.has("llm_adapter") else self._create_llm_adapter()
+        return SceneAnalyzer(llm_adapter=llm_adapter)
 
     def _create_persona_inferencer(self) -> BasePersonaInferencer:
         """Create persona inferencer based on mode.

@@ -33,7 +33,7 @@ class EmotionSummary(BaseModel):
 class PersonaSnapshot(BaseModel):
     """Snapshot of inferred user persona characteristics."""
 
-    style: Literal["理性", "感性", "幽默", "克制"]
+    style: str
     pacing: Literal["slow", "normal", "fast"]
     risk_tolerance: Literal["low", "medium", "high"]
     confidence: float = Field(ge=0.0, le=1.0, description="Confidence score from 0 to 1")
@@ -57,6 +57,7 @@ class ContextResult(BaseModel):
     current_intimacy_level: int = Field(ge=0, le=101)  # 当前亲密度等级（范围0-101）
     risk_flags: list[str] = Field(default_factory=list) # 风险标识/风险标记列表（默认空列表）
     conversation: list[Message] = Field(default=[])
+    history_conversation: str = ""
 
 
 class SceneAnalysisInput(BaseModel):

@@ -325,56 +325,133 @@ class Orchestrator:
             exec_ctx.step_logs.append(StepExecutionLog(
                 step_name=step_name,
                 status="failed",
-                duration_ms=duration_ms,
-                error=str(e),
-            ))
-            raise
 
-    async def _build_context(
-        self, 
-        request: GenerateReplyRequest
-    ) -> ContextResult:
-        """Build context from request.
-        
-        Args:
-            request: The generation request.
-        
-        Returns:
-            ContextResult from context builder.
-        
-        Raises:
-            ContextBuildError: If context building fails.
-        """
-        try:
-            messages = self._dialogs_to_messages(request.dialogs)
-            print("start to build input data")
-            input_data = ContextBuilderInput(
-                user_id=request.user_id,
-                target_id=request.target_id,
-                conversation_id=request.conversation_id,
-                history_dialog=messages,
-                emotion_trend=None,
-            )
-            print("_build_context", request.dialogs, type(self.context_builder))
-            result = await self.context_builder.build_context(input_data)
+            start_time = time.time()
+            try:
+                result = await asyncio.wait_for(
+                    step_func(*args, **kwargs),
+                    timeout=self.config.timeout_seconds,
+                )
+                duration_ms = int((time.time() - start_time) * 1000)
+                trace_logger.log_event(
+                    {
+                        "level": "debug",
+                        "type": "step_end",
+                        "step_id": step_id,
+                        "step_name": step_name,
+                        "user_id": exec_ctx.user_id,
+                        "conversation_id": exec_ctx.conversation_id,
+                        "duration_ms": duration_ms,
+                        "result": result,
+                    }
+                )
+                exec_ctx.step_logs.append(StepExecutionLog(
+                    step_name=step_name,
+                    status="success",
+                    duration_ms=duration_ms,
+                ))
+                return result
+            except asyncio.TimeoutError:
+                duration_ms = int((time.time() - start_time) * 1000)
+                trace_logger.log_event(
+                    {
+                        "level": "error",
+                        "type": "step_error",
+                        "step_id": step_id,
+                        "step_name": step_name,
+                        "user_id": exec_ctx.user_id,
+                        "conversation_id": exec_ctx.conversation_id,
+                        "duration_ms": duration_ms,
+                        "error": "timeout",
+                    }
+                )
+                exec_ctx.step_logs.append(StepExecutionLog(
+                    step_name=step_name,
+                    status="failed",
+                    duration_ms=duration_ms,
+                    error="timeout",
+                ))
+                raise
+            except Exception as e:
+                duration_ms = int((time.time() - start_time) * 1000)
+                trace_logger.log_event(
+                    {
+                        "level": "error",
+                        "type": "step_error",
+                        "step_id": step_id,
+                        "step_name": step_name,
+                        "user_id": exec_ctx.user_id,
+                        "conversation_id": exec_ctx.conversation_id,
+                        "duration_ms": duration_ms,
+                        "error": str(e),
+                        "traceback": traceback.format_exc(),
+                    }
+                )
+                exec_ctx.step_logs.append(StepExecutionLog(
+                    step_name=step_name,
+                    status="failed",
+                    duration_ms=duration_ms,
+                    error=str(e),
+                ))
+                raise
 
-            if self.persistence_service is not None and result.conversation_summary:
-                await self.persistence_service.save_conversation_summary(
+        async def _build_context(
+            self, 
+            request: GenerateReplyRequest
+        ) -> ContextResult:
+            """Build context from request.
+            
+            Args:
+                request: The generation request.
+            
+            Returns:
+                ContextResult from context builder.
+            
+            Raises:
+                ContextBuildError: If context building fails.
+            """
+            try:
+                messages = self._dialogs_to_messages(request.dialogs)
+                print("start to build input data")
+                input_data = ContextBuilderInput(
                     user_id=request.user_id,
                     target_id=request.target_id,
                     conversation_id=request.conversation_id,
-                    summary=result.conversation_summary,
+                    history_dialog=messages,
+                    emotion_trend=None,
                 )
+                print("_build_context", request.dialogs, type(self.context_builder))
+                result = await self.context_builder.build_context(input_data)
 
-            return result
-        except Exception as e:
-            
-            print(traceback.format_exc())
-            raise ContextBuildError(
-                message=f"Failed to build context: {e}",
-                conversation_id=request.conversation_id,
-            ) from e
+                if self.persistence_service is not None and result.conversation_summary:
+                    await self.persistence_service.save_conversation_summary(
+                        user_id=request.user_id,
+                        target_id=request.target_id,
+                        conversation_id=request.conversation_id,
+                        summary=result.conversation_summary,
+                    )
 
+                history_conversation = "no history conversation"
+                if self.persistence_service is not None:
+                    try:
+                        logs = await self.persistence_service.list_conversation_summaries(
+                            user_id=request.user_id,
+                            target_id=request.target_id,
+                            limit=20,
+                            offset=0,
+                        )
+                        summaries: list[str] = []
+                        for log in logs:
+                            if getattr(log, "conversation_id", None) == request.conversation_id:
+                                continue
+                            summary = getattr(log, "summary", "")
+                            if isinstance(summary, str) and summary.strip():
+                                summaries.append(summary.strip())
+                        if summaries:
+                            history_conversation = "\n".join(summaries)
+                    except Exception:
+                        history_conversation = "no history conversation"
+                result.history_conversation = history_conversation
     async def _analyze_scene(
         self, 
         request: GenerateReplyRequest,
@@ -389,11 +466,11 @@ class Orchestrator:
         Returns:
             SceneAnalysisResult from scene analyzer.
         """
-        messages = self._dialogs_to_messages(request.dialogs)
         input_data = SceneAnalysisInput(
             conversation_id=request.conversation_id,
-            history_dialog=messages,
+            history_dialog=self._dialogs_to_messages(request.dialogs),
             emotion_trend=None,
+            current_conversation_summary=context.conversation_summary or "",
             intimacy_value=request.intimacy_value,  # 用户设置的亲密度
             current_intimacy_level=context.current_intimacy_level,  # 当前分析的亲密度
         )
