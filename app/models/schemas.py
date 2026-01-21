@@ -54,7 +54,7 @@ class ContextResult(BaseModel):
 
     conversation_summary: str # 对话摘要/总结
     emotion_state: str # 情绪状态
-    current_intimacy_level: int = Field(ge=0, le=101)  # 当前亲密度等级（范围0-101）
+    current_intimacy_level: int = Field(ge=0, le=100)  # 当前亲密度等级（范围0-100）
     risk_flags: list[str] = Field(default_factory=list) # 风险标识/风险标记列表（默认空列表）
     conversation: list[Message] = Field(default=[])
     history_conversation: str = ""
@@ -69,8 +69,8 @@ class SceneAnalysisInput(BaseModel):
     history_topic_summary: str = ""  # 历史对话话题总结
     current_conversation_summary: str = ""  # 当前对话总结
     current_conversation: list[Message] = Field(default_factory=list)  # 当前对话
-    intimacy_value: int = Field(default=50, ge=0, le=101)  # 用户设置的亲密度
-    current_intimacy_level: int = Field(default=50, ge=0, le=101)  # 当前分析的亲密度
+    intimacy_value: int = Field(default=50, ge=0, le=100)  # 用户设置的亲密度
+    current_intimacy_level: int = Field(default=50, ge=0, le=100)  # 当前分析的亲密度
 
 
 class SceneAnalysisResult(BaseModel):
@@ -79,7 +79,7 @@ class SceneAnalysisResult(BaseModel):
     relationship_state: Literal["破冰", "推进", "冷却", "维持",
                                 "ignition","propulsion","ventilation","equilibrium"]
     scenario: str  # 推荐情景（从 recommended_scenario 获取）
-    intimacy_level: int = Field(ge=0, le=101)  # 用户设置的亲密度
+    intimacy_level: int = Field(ge=0, le=100)  # 用户设置的亲密度
     risk_flags: list[str] = Field(default_factory=list)  # 基于亲密度差异的风险标记
     current_scenario: str = ""  # 当前情景（安全/低风险策略|平衡/中风险策略|高风险/高回报策略|关系修复策略|禁止的策略）
     recommended_scenario: str = ""  # 推荐情景
@@ -123,7 +123,7 @@ class IntimacyCheckInput(BaseModel):
     """Input for the intimacy check service."""
 
     reply_text: str
-    intimacy_level: int = Field(ge=0, le=101)
+    intimacy_level: int = Field(ge=0, le=100)
     persona: PersonaSnapshot
 
 

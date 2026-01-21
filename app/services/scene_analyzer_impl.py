@@ -100,8 +100,8 @@ class SceneAnalyzer(BaseSceneAnalyzer):
         """根据用户设置的亲密度和当前亲密度计算关系状态.
         
         Args:
-            intimacy_value: 用户设置的亲密度 (0-101)
-            current_intimacy_level: 当前分析的亲密度 (0-101)
+            intimacy_value: 用户设置的亲密度 (0-100)
+            current_intimacy_level: 当前分析的亲密度 (0-100)
         
         Returns:
             关系状态: "破冰", "推进", "冷却", "维持"
@@ -111,7 +111,7 @@ class SceneAnalyzer(BaseSceneAnalyzer):
         
         # 如果当前亲密度低于用户期望，需要推进
         if diff > 10:
-            if current_intimacy_level < 40:
+            if current_intimacy_level <= 40:
                 return "ignition"  # 低亲密度阶段，需要破冰
             else:
                 return "propulsion"  # 中高亲密度阶段，需要推进
@@ -132,8 +132,8 @@ class SceneAnalyzer(BaseSceneAnalyzer):
         """根据亲密度差异计算风险标记.
         
         Args:
-            intimacy_value: 用户设置的亲密度 (0-101)
-            current_intimacy_level: 当前分析的亲密度 (0-101)
+            intimacy_value: 用户设置的亲密度 (0-100)
+            current_intimacy_level: 当前分析的亲密度 (0-100)
         
         Returns:
             风险标记列表
@@ -152,11 +152,11 @@ class SceneAnalyzer(BaseSceneAnalyzer):
             risk_flags.append("Need to repair relationship") # 需要修复关系
         
         # 当前亲密度很低但期望很高
-        if current_intimacy_level < 30 and intimacy_value > 70:
+        if current_intimacy_level <= 40 and intimacy_value >= 81:
             risk_flags.append("Excessively large gap") # 跨度过大
         
         # 当前亲密度很高但期望降低
-        if current_intimacy_level > 70 and intimacy_value < 30:
+        if current_intimacy_level >= 81 and intimacy_value <= 40:
             risk_flags.append("Relationship crisis") # 关系危机
         
         return risk_flags
