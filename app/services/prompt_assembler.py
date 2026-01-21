@@ -31,7 +31,9 @@ class PromptAssembler:
         conversation_summary = context.conversation_summary
         current_intimacy_level = context.current_intimacy_level
         emotion_state = context.emotion_state
-        conversation = self._format_conversation(context.conversation)
+        conversation = getattr(context, "history_conversation", "")
+        if not isinstance(conversation, str) or not conversation.strip():
+            conversation = "no history conversation"
 
         scenario = scene.scenario
         intimacy_level = scene.intimacy_level
