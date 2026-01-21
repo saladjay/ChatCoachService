@@ -68,13 +68,7 @@ neediness_signal, performative_niceness
 {{
   "current_scenario": "Safe|Balanced|Risky|Recovery|Negative",
   "recommended_scenario": "Safe|Balanced|Risky|Recovery|Negative",
-  "recommended_strategies": ["strategy1","strategy2","strategy3"],
-  "risk_level": "safe|balanced|risky|recovery",
-  "relationship_stage": "stranger|acquaintance|friend|intimate",
-  "emotional_tone": "positive|neutral|negative|tense",
-  "avoid_patterns": ["pattern"],
-  "confidence": 0.0,
-  "analysis": "brief explanation"
+  "recommended_strategies": ["strategy1","strategy2","strategy3"]
 }}
 """
 
@@ -170,11 +164,10 @@ Generate 3 high-quality reply suggestions:
 ## Output (JSON only)
 {{
   "replies": [
-    {{"text": "...", "strategy": "...", "reasoning": "..."}},
-    {{"text": "...", "strategy": "...", "reasoning": "..."}},
-    {{"text": "...", "strategy": "...", "reasoning": "..."}}
-  ],
-  "overall_advice": "overall guidance"
+    {{"text": "...", "strategy": "..."}},
+    {{"text": "...", "strategy": "..."}},
+    {{"text": "...", "strategy": "..."}}
+  ]
 }}
 
 All reply texts must be in {language}.
