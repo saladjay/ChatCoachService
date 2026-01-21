@@ -196,7 +196,7 @@ class Orchestrator:
             for record in exec_ctx.billing_records:
                 await self.billing_service.record_call(record)
             
-            # Convert intimacy level from 0-101 scale to 1-5 scale
+            # Convert intimacy level from 0-100 scale to 1-5 scale
             intimacy_level_1_5 = self._convert_intimacy_level(scene.intimacy_level)
             
             # Build response
@@ -597,24 +597,24 @@ class Orchestrator:
         )
         exec_ctx.billing_records.append(record)
 
-    def _convert_intimacy_level(self, intimacy_level_0_101: int) -> int:
-        """Convert intimacy level from 0-101 scale to 1-5 scale.
+    def _convert_intimacy_level(self, intimacy_level_0_100: int) -> int:
+        """Convert intimacy level from 0-100 scale to 1-5 scale.
         
         Args:
-            intimacy_level_0_101: Intimacy level on 0-101 scale
+            intimacy_level_0_100: Intimacy level on 0-100 scale
         
         Returns:
             Intimacy level on 1-5 scale
         """
-        # Map 0-101 to 1-5
-        # 0-20 -> 1, 21-40 -> 2, 41-60 -> 3, 61-80 -> 4, 81-101 -> 5
-        if intimacy_level_0_101 <= 20:
+        # Map 0-100 to 1-5
+        # 0-20 -> 1, 21-40 -> 2, 41-60 -> 3, 61-80 -> 4, 81-100 -> 5
+        if intimacy_level_0_100 <= 20:
             return 1
-        elif intimacy_level_0_101 <= 40:
+        elif intimacy_level_0_100 <= 40:
             return 2
-        elif intimacy_level_0_101 <= 60:
+        elif intimacy_level_0_100 <= 60:
             return 3
-        elif intimacy_level_0_101 <= 80:
+        elif intimacy_level_0_100 <= 80:
             return 4
         else:
             return 5
