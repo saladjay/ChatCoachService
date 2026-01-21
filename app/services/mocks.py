@@ -68,8 +68,11 @@ class MockSceneAnalyzer(BaseSceneAnalyzer):
         return SceneAnalysisResult(
             relationship_state="维持",
             scenario="BALANCED",
-            intimacy_level=3,  # 使用 1-5 的范围
+            intimacy_level=input.intimacy_value,
             risk_flags=[],
+            current_scenario="平衡/中风险策略",
+            recommended_scenario="平衡/中风险策略",
+            recommended_strategies=[],
         )
 
 

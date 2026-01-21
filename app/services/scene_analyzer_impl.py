@@ -29,8 +29,8 @@ class SceneAnalyzer(BaseSceneAnalyzer):
             model: Optional LLM model name
         """
         self._llm_adapter = llm_adapter
-        self.provider = provider or "dashscope"
-        self.model = model or "qwen-flash"
+        self.provider = "dashscope"
+        self.model = "qwen-flash"
 
     async def analyze_scene(self, input: SceneAnalysisInput) -> SceneAnalysisResult:
         """Analyze conversation scene using LLM.
@@ -73,13 +73,24 @@ class SceneAnalyzer(BaseSceneAnalyzer):
         # 构建返回结果
         return SceneAnalysisResult(
             relationship_state=relationship_state,
-            scenario=analysis.get("recommended_scenario", "平衡/中风险策略"),  # 使用推荐场景
+            scenario=analysis.get("recommended_scenario", "balance/medium risk strategy"),  # 使用推荐场景
             intimacy_level=input.intimacy_value,  # 使用用户设置的亲密度
             risk_flags=risk_flags,
             current_scenario=analysis.get("current_scenario", ""),
             recommended_scenario=analysis.get("recommended_scenario", ""),
             recommended_strategies=analysis.get("recommended_strategy", []),
         )
+    
+    def _display_speaker(self, speaker) -> str:
+        s = str(speaker or "").strip()
+        if not s:
+            return "unknown"
+        low = s.casefold()
+        if low in {"user"}:
+            return "me"
+        if low in {"assistant", "bot", "system", "ai", "target"}:
+            return "opponent"
+        return s
     
     def _calculate_relationship_state(
         self, 
@@ -94,23 +105,24 @@ class SceneAnalyzer(BaseSceneAnalyzer):
         
         Returns:
             关系状态: "破冰", "推进", "冷却", "维持"
+            relationship_state: "ignition", "propulsion", "ventilation", "equilibrium"
         """
         diff = intimacy_value - current_intimacy_level
         
         # 如果当前亲密度低于用户期望，需要推进
         if diff > 10:
             if current_intimacy_level < 40:
-                return "破冰"  # 低亲密度阶段，需要破冰
+                return "ignition"  # 低亲密度阶段，需要破冰
             else:
-                return "推进"  # 中高亲密度阶段，需要推进
+                return "propulsion"  # 中高亲密度阶段，需要推进
         
         # 如果当前亲密度高于用户期望，需要冷却
         elif diff < -10:
-            return "冷却"
+            return "ventilation"
         
         # 亲密度相近，维持现状
         else:
-            return "维持"
+            return "equilibrium"
     
     def _calculate_risk_flags(
         self,
@@ -131,21 +143,21 @@ class SceneAnalyzer(BaseSceneAnalyzer):
         
         # 期望亲密度远高于当前亲密度
         if diff > 20:
-            risk_flags.append("期望过高")
-            risk_flags.append("需要循序渐进")
+            risk_flags.append("Overly high expectations") # 期望过高
+            risk_flags.append("Need to proceed gradually") # 需要循序渐进
         
         # 期望亲密度远低于当前亲密度
         elif diff < -20:
-            risk_flags.append("关系倒退")
-            risk_flags.append("需要修复关系")
+            risk_flags.append("Relationship regression") # 关系倒退
+            risk_flags.append("Need to repair relationship") # 需要修复关系
         
         # 当前亲密度很低但期望很高
         if current_intimacy_level < 30 and intimacy_value > 70:
-            risk_flags.append("跨度过大")
+            risk_flags.append("Excessively large gap") # 跨度过大
         
         # 当前亲密度很高但期望降低
         if current_intimacy_level > 70 and intimacy_value < 30:
-            risk_flags.append("关系危机")
+            risk_flags.append("Relationship crisis") # 关系危机
         
         return risk_flags
     
@@ -162,23 +174,24 @@ class SceneAnalyzer(BaseSceneAnalyzer):
         
         # 添加历史话题总结
         if input.history_topic_summary:
-            lines.append(f"## 历史对话话题总结\n{input.history_topic_summary}\n")
+            lines.append(f"## history topic summary\n{input.history_topic_summary}\n") ## 历史对话话题总结
         
         # 添加当前对话总结
         if input.current_conversation_summary:
-            lines.append(f"## 当前对话总结\n{input.current_conversation_summary}\n")
+            lines.append(f"## current conversation summary\n{input.current_conversation_summary}\n") ## 当前对话总结
+            return "\n".join(lines)
         
         # 添加当前对话详情
         if input.current_conversation:
-            lines.append("## 当前对话")
+            lines.append("## current conversation") ## 当前对话
             for msg in input.current_conversation:
-                speaker = "用户" if msg.speaker == "user" else msg.speaker
+                speaker = self._display_speaker(msg.speaker)
                 lines.append(f"{speaker}: {msg.content}")
         elif input.history_dialog:
             # 如果没有 current_conversation，使用 history_dialog
-            lines.append("## 对话历史")
+            lines.append("## history dialog") ## 对话历史
             for msg in input.history_dialog:
-                speaker = "用户" if msg.speaker == "user" else msg.speaker
+                speaker = self._display_speaker(msg.speaker)
                 lines.append(f"{speaker}: {msg.content}")
         
         return "\n".join(lines)
@@ -213,21 +226,27 @@ class SceneAnalyzer(BaseSceneAnalyzer):
         try:
             data = json.loads(text)
             
-            # 处理 recommended_strategy - 可能是字符串或列表
-            recommended_strategy = data.get("recommended_strategy", [])
+            # 兼容两种字段名：recommended_strategies(list) / recommended_strategy(str|list)
+            recommended_strategy = data.get("recommended_strategies")
+            if recommended_strategy is None:
+                recommended_strategy = data.get("recommended_strategy", [])
             if isinstance(recommended_strategy, str):
-                # 如果是字符串，尝试分割成列表
-                recommended_strategy = [s.strip() for s in recommended_strategy.split(",")]
+                recommended_strategy = [s.strip() for s in recommended_strategy.split(",") if s.strip()]
+            if isinstance(recommended_strategy, list):
+                recommended_strategy = [str(s).strip() for s in recommended_strategy if str(s).strip()]
+            else:
+                recommended_strategy = []
             
             return {
-                "current_scenario": data.get("current_scenario", "平衡/中风险策略"),
-                "recommended_scenario": data.get("recommended_scenario", "平衡/中风险策略"),
+                "current_scenario": data.get("current_scenario", "balance/medium risk strategy"), ## 当前场景
+                "recommended_scenario": data.get("recommended_scenario", "balance/medium risk strategy"), ## 推荐场景
                 "recommended_strategy": recommended_strategy,
             }
+        
         except json.JSONDecodeError:
             # 如果解析失败，返回默认值
             return {
-                "current_scenario": "平衡/中风险策略",
-                "recommended_scenario": "平衡/中风险策略",
+                "current_scenario": "balance/medium risk strategy",
+                "recommended_scenario": "balance/medium risk strategy",
                 "recommended_strategy": [],
             }
