@@ -52,6 +52,10 @@ async def main():
     settings.trace.enabled = True
     settings.trace.level = "debug"
     settings.trace.log_llm_prompt = True
+
+    settings.moderation.use_library = True
+    settings.moderation.allow_http_fallback = False
+    settings.moderation.fail_open = False
     print(f"✓ Trace enabled: file={settings.trace.file_path}")
     print("✓ LLM prompt files will be written to logs/llm_prompts/<call_id>.txt")
     

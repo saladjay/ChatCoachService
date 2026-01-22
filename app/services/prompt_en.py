@@ -102,14 +102,14 @@ Conversation history:
 
 Classify:
 - Emotion: positive | neutral | negative
-- Intimacy: stranger | familiar | intimate | recovery
+- Intimacy stage: stranger | acquaintance | friend | intimate | bonded
 - Scenario: SAFE | BALANCED | RISKY | RECOVERY | NEGATIVE
 
 Output JSON only:
 {{
   "conversation_summary": "summary",
   "emotion_state": "positive|neutral|negative",
-  "current_intimacy_level": "stranger|familiar|intimate|recovery",
+  "current_intimacy_level": "stranger|acquaintance|friend|intimate|bonded",
   "scenario": "SAFE|BALANCED|RISKY|RECOVERY|NEGATIVE"
 }}
 """

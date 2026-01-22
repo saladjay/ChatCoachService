@@ -102,6 +102,15 @@ class PromptConfig(BaseSettings):
             max_reply_tokens=max_reply_tokens,
             use_compact_schemas=use_compact_schemas
         )
+class ModerationClientConfig(BaseSettings):
+    model_config = SettingsConfigDict(env_prefix="MODERATION_")
+
+    base_url: str = "http://localhost:8000"
+    timeout_seconds: float = 5.0
+    policy: str = "default"
+    fail_open: bool = True
+    use_library: bool = True
+    allow_http_fallback: bool = True
 
 
 class AppConfig(BaseSettings):
@@ -137,6 +146,7 @@ class AppConfig(BaseSettings):
     database: DatabaseConfig = DatabaseConfig()
     trace: TraceConfig = TraceConfig()
     prompt: PromptConfig = PromptConfig.from_env()
+    moderation: ModerationClientConfig = ModerationClientConfig()
 
 
 # Global configuration instance

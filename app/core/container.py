@@ -44,6 +44,7 @@ from app.services.user_profile_impl import (
     UserProfilePersonaInferencer,
 )
 from app.services.persistence import PersistenceService
+from app.services.intimacy_checker_impl import ModerationServiceIntimacyChecker
 
 
 T = TypeVar("T")
@@ -304,8 +305,15 @@ class ServiceContainer:
         """
         if self._mode == ServiceMode.MOCK:
             return MockIntimacyChecker()
-        # Real implementation would be returned here when available
-        return MockIntimacyChecker()
+        cfg = self.config.moderation
+        return ModerationServiceIntimacyChecker(
+            base_url=cfg.base_url,
+            timeout_seconds=cfg.timeout_seconds,
+            policy=cfg.policy,
+            fail_open=cfg.fail_open,
+            use_library=cfg.use_library,
+            allow_http_fallback=cfg.allow_http_fallback,
+        )
 
     def get_context_builder(self) -> BaseContextBuilder:
         """Get the context builder service.
