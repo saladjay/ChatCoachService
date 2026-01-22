@@ -1,0 +1,17 @@
+{
+  "prompt_id": "reply_generation_v1.0-original",
+  "prompt_type": "reply_generation",
+  "version": "v1.0-original",
+  "created_at": "2026-01-21T15:17:25.755609",
+  "author": "initial_dev",
+  "description": "Original reply generation prompt with full user profile",
+  "tags": [
+    "original",
+    "full",
+    "detailed"
+  ],
+  "token_estimate": 832,
+  "performance_notes": "Baseline version. Most token-heavy component.",
+  "is_active": false,
+  "parent_version": null
+}

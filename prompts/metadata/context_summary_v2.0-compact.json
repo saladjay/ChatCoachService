@@ -1,0 +1,17 @@
+{
+  "prompt_id": "context_summary_v2.0-compact",
+  "prompt_type": "context_summary",
+  "version": "v2.0-compact",
+  "created_at": "2026-01-21T15:17:25.758930",
+  "author": "optimization_team",
+  "description": "Compact context summary prompt with abbreviated conversation",
+  "tags": [
+    "compact",
+    "optimized",
+    "token-efficient"
+  ],
+  "token_estimate": 350,
+  "performance_notes": "28% token reduction. Limits to 5 recent messages with truncation.",
+  "is_active": true,
+  "parent_version": "context_summary_v1.0-original"
+}

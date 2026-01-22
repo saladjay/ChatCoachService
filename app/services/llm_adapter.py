@@ -54,6 +54,7 @@ class LLMCall:
         user_id: str = "system",
         provider: str | None = None,
         model: str | None = None,
+        max_tokens: int | None = None,  # Phase 3: Token limit
     ):
         """Initialize LLM call request.
         
@@ -64,6 +65,7 @@ class LLMCall:
             user_id: User ID for billing/logging
             provider: Optional specific provider (e.g., 'dashscope', 'openai')
             model: Optional specific model (required if provider is specified)
+            max_tokens: Optional maximum tokens for output (Phase 3)
         """
         self.task_type = task_type
         self.prompt = prompt
@@ -71,6 +73,7 @@ class LLMCall:
         self.user_id = user_id
         self.provider = provider
         self.model = model
+        self.max_tokens = max_tokens  # Phase 3
 
 
 class BaseLLMAdapter:
@@ -86,6 +89,7 @@ class BaseLLMAdapter:
         provider: str,
         model: str,
         user_id: str = "system",
+        max_tokens: int | None = None,  # Phase 3
     ) -> LLMResult:
         """Make an LLM call with specific provider and model."""
         raise NotImplementedError
@@ -134,6 +138,11 @@ class LLMAdapterImpl(BaseLLMAdapter):
         
         Raises:
             LLMAdapterError: If all providers fail.
+        
+        Note:
+            Phase 3: max_tokens parameter is stored but not yet enforced by
+            the underlying adapter. This will be implemented when the
+            over-seas-llm-platform-service supports max_tokens.
         """
         # 如果指定了 provider 和 model，直接调用
         if llm_call.provider and llm_call.model:
@@ -142,11 +151,15 @@ class LLMAdapterImpl(BaseLLMAdapter):
                 provider=llm_call.provider,
                 model=llm_call.model,
                 user_id=llm_call.user_id,
+                max_tokens=llm_call.max_tokens,  # Phase 3: Pass through
             )
         
         # 否则使用 quality-based routing
         quality = QUALITY_MAP.get(llm_call.quality, "medium")
         scene = TASK_SCENE_MAP.get(llm_call.task_type, "chat")
+        
+        # Phase 3: Note max_tokens for future implementation
+        # TODO: Pass max_tokens to adapter.generate() when supported
         
         response = await self._adapter.generate(
             user_id=llm_call.user_id,
@@ -170,6 +183,7 @@ class LLMAdapterImpl(BaseLLMAdapter):
         provider: str,
         model: str,
         user_id: str = "system",
+        max_tokens: int | None = None,  # Phase 3: Token limit
     ) -> LLMResult:
         """Make an LLM call with specific provider and model.
         
@@ -181,6 +195,7 @@ class LLMAdapterImpl(BaseLLMAdapter):
             provider: Provider name (e.g., 'dashscope', 'openai', 'gemini')
             model: Model name (e.g., 'qwen-plus', 'gpt-4o', 'gemini-1.5-flash')
             user_id: User ID for billing/logging
+            max_tokens: Optional maximum tokens for output (Phase 3)
         
         Returns:
             LLMResult with generated text and metadata.
@@ -188,12 +203,19 @@ class LLMAdapterImpl(BaseLLMAdapter):
         Raises:
             ValueError: If provider is not supported
             LLMAdapterError: If the provider call fails
+        
+        Note:
+            Phase 3: max_tokens parameter is stored but not yet enforced by
+            the underlying adapter.
         """
         if provider not in SUPPORTED_PROVIDERS:
             raise ValueError(
                 f"Unsupported provider: {provider}. "
                 f"Supported providers: {SUPPORTED_PROVIDERS}"
             )
+        
+        # Phase 3: Note max_tokens for future implementation
+        # TODO: Pass max_tokens to adapter.generate_with_provider() when supported
         
         response = await self._adapter.generate_with_provider(
             user_id=user_id,

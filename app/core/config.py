@@ -3,6 +3,7 @@ Application configuration using Pydantic Settings.
 Supports loading from environment variables and .env files.
 """
 
+import os
 from typing import Literal
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -59,6 +60,50 @@ class TraceConfig(BaseSettings):
     log_llm_prompt: bool = True
 
 
+class PromptConfig(BaseSettings):
+    """Configuration for prompt optimization (Phase 3: Output Optimization)."""
+    
+    model_config = SettingsConfigDict(env_prefix="PROMPT_")
+    
+    include_reasoning: bool = False
+    max_reply_tokens: int = 100
+    use_compact_schemas: bool = True
+    
+    @classmethod
+    def from_env(cls) -> "PromptConfig":
+        """Load configuration from environment variables with validation."""
+        include_reasoning = False
+        max_reply_tokens = 100
+        use_compact_schemas = True
+        
+        # Parse include_reasoning
+        reasoning_str = os.getenv("PROMPT_INCLUDE_REASONING", "false").lower()
+        if reasoning_str in ("true", "1", "yes"):
+            include_reasoning = True
+        
+        # Parse max_reply_tokens with validation
+        try:
+            tokens = int(os.getenv("PROMPT_MAX_REPLY_TOKENS", "100"))
+            if 20 <= tokens <= 500:
+                max_reply_tokens = tokens
+            else:
+                # Clamp to valid range
+                max_reply_tokens = max(20, min(500, tokens))
+        except (ValueError, TypeError):
+            pass  # Use default
+        
+        # Parse use_compact_schemas
+        compact_str = os.getenv("PROMPT_USE_COMPACT_SCHEMAS", "true").lower()
+        if compact_str in ("false", "0", "no"):
+            use_compact_schemas = False
+        
+        return cls(
+            include_reasoning=include_reasoning,
+            max_reply_tokens=max_reply_tokens,
+            use_compact_schemas=use_compact_schemas
+        )
+
+
 class AppConfig(BaseSettings):
     """Main application configuration."""
     
@@ -91,6 +136,7 @@ class AppConfig(BaseSettings):
     billing: BillingConfig = BillingConfig()
     database: DatabaseConfig = DatabaseConfig()
     trace: TraceConfig = TraceConfig()
+    prompt: PromptConfig = PromptConfig.from_env()
 
 
 # Global configuration instance

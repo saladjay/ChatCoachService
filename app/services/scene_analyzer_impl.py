@@ -8,6 +8,9 @@ from app.services.base import (
 )
 from app.services.llm_adapter import BaseLLMAdapter, LLMCall
 from app.services.prompt import SCENARIO_PROMPT
+from app.services.prompt_compact import SCENARIO_PROMPT_COMPACT, SCENARIO_PROMPT_COMPACT_V2
+from app.services.schema_expander import SchemaExpander, parse_and_expand_scene_analysis
+from app.models.schemas_compact import SceneAnalysisCompact
 import json
 
 
@@ -20,17 +23,28 @@ class SceneAnalyzer(BaseSceneAnalyzer):
     - Recommended strategies (3 specific strategy codes)
     """
     
-    def __init__(self, llm_adapter: BaseLLMAdapter, provider: str | None = None, model: str | None = None):
+    def __init__(
+        self, 
+        llm_adapter: BaseLLMAdapter, 
+        provider: str | None = None, 
+        model: str | None = None,
+        use_compact_prompt: bool = True,
+        use_compact_v2: bool = True
+    ):
         """Initialize SceneAnalyzer with LLM adapter.
         
         Args:
             llm_adapter: LLM adapter for analyzing conversation context
             provider: Optional LLM provider (e.g., "dashscope", "openai")
             model: Optional LLM model name
+            use_compact_prompt: Use compact prompt to reduce tokens (default: True)
+            use_compact_v2: Use compact V2 with compact output codes (default: True)
         """
         self._llm_adapter = llm_adapter
         self.provider = "dashscope"
         self.model = "qwen-flash"
+        self.use_compact_prompt = use_compact_prompt
+        self.use_compact_v2 = use_compact_v2
 
     async def analyze_scene(self, input: SceneAnalysisInput) -> SceneAnalysisResult:
         """Analyze conversation scene using LLM.
@@ -41,11 +55,22 @@ class SceneAnalyzer(BaseSceneAnalyzer):
         Returns:
             SceneAnalysisResult with current scenario, recommended scenario, and strategies.
         """
-        # 构建对话文本
-        conversation_text = self._format_conversation(input)
+        # Phase 2 优化：只使用摘要，不使用完整对话
+        # 这样可以大幅减少 prompt 大小（目标 ~80 tokens 固定部分）
+        conversation_summary = input.current_conversation_summary or input.history_topic_summary or "No summary available"
         
-        # 调用 LLM 分析场景
-        prompt = SCENARIO_PROMPT.format(conversation=conversation_text)
+        if self.use_compact_prompt and self.use_compact_v2:
+            # 使用紧凑 V2 版本（最优化，使用紧凑输出代码）
+            # Phase 2: 进一步简化 prompt
+            prompt = self._build_ultra_compact_prompt(conversation_summary, input)
+        elif self.use_compact_prompt:
+            # 使用紧凑 V1 版本（减少 token）
+            prompt = SCENARIO_PROMPT_COMPACT.format(conversation_summary=conversation_summary)
+        else:
+            # 使用完整版 prompt（用于调试）
+            conversation_text = self._format_conversation(input)
+            prompt = SCENARIO_PROMPT.format(conversation=conversation_text)
+        
         llm_call = LLMCall(
             task_type="scene",
             prompt=prompt,
@@ -58,28 +83,62 @@ class SceneAnalyzer(BaseSceneAnalyzer):
         result = await self._llm_adapter.call(llm_call)
         
         # 解析 LLM 返回的 JSON
-        analysis = self._parse_response(result.text)
+        if self.use_compact_v2:
+            # 使用紧凑模式解析和扩展
+            analysis = self._parse_compact_response(result.text, input)
+        else:
+            # 使用传统解析
+            analysis = self._parse_response(result.text)
+            
+            # 根据亲密度计算 relationship_state 和 risk_flags
+            relationship_state = self._calculate_relationship_state(
+                input.intimacy_value, 
+                input.current_intimacy_level
+            )
+            risk_flags = self._calculate_risk_flags(
+                input.intimacy_value,
+                input.current_intimacy_level
+            )
+            
+            # 构建返回结果
+            analysis = SceneAnalysisResult(
+                relationship_state=relationship_state,
+                scenario=analysis.get("recommended_scenario", "balance/medium risk strategy"),
+                intimacy_level=input.intimacy_value,
+                risk_flags=risk_flags,
+                current_scenario=analysis.get("current_scenario", ""),
+                recommended_scenario=analysis.get("recommended_scenario", ""),
+                recommended_strategies=analysis.get("recommended_strategy", []),
+            )
         
-        # 根据亲密度计算 relationship_state 和 risk_flags
-        relationship_state = self._calculate_relationship_state(
-            input.intimacy_value, 
-            input.current_intimacy_level
-        )
-        risk_flags = self._calculate_risk_flags(
-            input.intimacy_value,
-            input.current_intimacy_level
-        )
+        return analysis
+    
+    def _build_ultra_compact_prompt(self, summary: str, input: SceneAnalysisInput) -> str:
+        """Build ultra-compact prompt for Phase 2 optimization.
         
-        # 构建返回结果
-        return SceneAnalysisResult(
-            relationship_state=relationship_state,
-            scenario=analysis.get("recommended_scenario", "balance/medium risk strategy"),  # 使用推荐场景
-            intimacy_level=input.intimacy_value,  # 使用用户设置的亲密度
-            risk_flags=risk_flags,
-            current_scenario=analysis.get("current_scenario", ""),
-            recommended_scenario=analysis.get("recommended_scenario", ""),
-            recommended_strategies=analysis.get("recommended_strategy", []),
-        )
+        Target: ~80 tokens for fixed prompt + summary length
+        
+        Args:
+            summary: Conversation summary
+            input: Scene analysis input
+        
+        Returns:
+            Ultra-compact prompt string
+        """
+        # 只包含最必要的信息
+        prompt = f"""[PROMPT:scene_analyzer_compact_v2]
+Scene analyzer. Analyze conversation and recommend scenario.
+
+Summary: {summary[:999]}
+Intimacy: target={input.intimacy_value}, current={input.current_intimacy_level}
+
+Output JSON:
+{{"cs": "S|B|R|C|N", "rs": "S|B|R|C|N", "st": ["s1","s2","s3"]}}
+
+cs=current_scenario, rs=recommended_scenario, st=strategies
+S=SAFE, B=BALANCED, R=RISKY, C=RECOVERY, N=NEGATIVE
+"""
+        return prompt
     
     def _display_speaker(self, speaker) -> str:
         s = str(speaker or "").strip()
@@ -250,3 +309,71 @@ class SceneAnalyzer(BaseSceneAnalyzer):
                 "recommended_scenario": "balance/medium risk strategy",
                 "recommended_strategy": [],
             }
+    
+    def _parse_compact_response(self, response_text: str, input: SceneAnalysisInput) -> SceneAnalysisResult:
+        """Parse compact LLM response and expand to full schema.
+        
+        This method handles the compact V2 output format with abbreviated field names
+        and codes, then expands it to the full SceneAnalysisResult schema.
+        
+        Args:
+            response_text: LLM response text with compact JSON
+            input: Original input for fallback calculations
+        
+        Returns:
+            Full SceneAnalysisResult
+        """
+        text = response_text.strip()
+        
+        # 处理 markdown 代码块
+        if "```json" in text:
+            start = text.find("```json") + 7
+            end = text.find("```", start)
+            text = text[start:end].strip()
+        elif "```" in text:
+            start = text.find("```") + 3
+            end = text.find("```", start)
+            text = text[start:end].strip()
+        
+        # 提取 JSON 对象
+        if "{" in text:
+            start = text.find("{")
+            end = text.rfind("}") + 1
+            text = text[start:end]
+        
+        try:
+            # 解析紧凑 JSON
+            data = json.loads(text)
+            compact = SceneAnalysisCompact(**data)
+            
+            # 使用 SchemaExpander 扩展为完整模式
+            result = SchemaExpander.expand_scene_analysis(compact)
+            
+            # 如果 LLM 没有提供 intimacy_level，使用输入的值
+            if result.intimacy_level == 0:
+                result.intimacy_level = input.intimacy_value
+            
+            return result
+            
+        except (json.JSONDecodeError, ValueError, Exception) as e:
+            # 解析失败，使用传统方法作为后备
+            # 计算 relationship_state 和 risk_flags
+            relationship_state = self._calculate_relationship_state(
+                input.intimacy_value, 
+                input.current_intimacy_level
+            )
+            risk_flags = self._calculate_risk_flags(
+                input.intimacy_value,
+                input.current_intimacy_level
+            )
+            
+            # 返回默认值
+            return SceneAnalysisResult(
+                relationship_state=relationship_state,
+                scenario="BALANCED",
+                intimacy_level=input.intimacy_value,
+                risk_flags=risk_flags,
+                current_scenario="BALANCED",
+                recommended_scenario="BALANCED",
+                recommended_strategies=[],
+            )

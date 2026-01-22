@@ -1,0 +1,141 @@
+{
+  "prompts": {
+    "scenario_analysis": [
+      {
+        "prompt_id": "scenario_analysis_v1.0-original",
+        "version": "v1.0-original",
+        "created_at": "2026-01-21T15:17:25.754210"
+      },
+      {
+        "prompt_id": "scenario_analysis_v2.0-compact",
+        "version": "v2.0-compact",
+        "created_at": "2026-01-21T15:17:25.758163"
+      }
+    ],
+    "context_summary": [
+      {
+        "prompt_id": "context_summary_v1.0-original",
+        "version": "v1.0-original",
+        "created_at": "2026-01-21T15:17:25.754943"
+      },
+      {
+        "prompt_id": "context_summary_v2.0-compact",
+        "version": "v2.0-compact",
+        "created_at": "2026-01-21T15:17:25.758930"
+      }
+    ],
+    "reply_generation": [
+      {
+        "prompt_id": "reply_generation_v1.0-original",
+        "version": "v1.0-original",
+        "created_at": "2026-01-21T15:17:25.755609"
+      },
+      {
+        "prompt_id": "reply_generation_v2.0-compact",
+        "version": "v2.0-compact",
+        "created_at": "2026-01-21T15:17:25.759638"
+      }
+    ],
+    "trait_discovery": [
+      {
+        "prompt_id": "trait_discovery_v1.0-original",
+        "version": "v1.0-original",
+        "created_at": "2026-01-21T15:17:25.756513"
+      }
+    ],
+    "trait_mapping": [
+      {
+        "prompt_id": "trait_mapping_v1.0-original",
+        "version": "v1.0-original",
+        "created_at": "2026-01-21T15:17:25.757117"
+      }
+    ]
+  },
+  "active_versions": {
+    "scenario_analysis": "scenario_analysis_v2.0-compact",
+    "context_summary": "context_summary_v2.0-compact",
+    "reply_generation": "reply_generation_v2.0-compact",
+    "trait_discovery": "trait_discovery_v1.0-original",
+    "trait_mapping": "trait_mapping_v1.0-original"
+  },
+  "version_history": [
+    {
+      "prompt_id": "scenario_analysis_v1.0-original",
+      "action": "register",
+      "timestamp": "2026-01-21T15:17:25.754684",
+      "author": "initial_dev"
+    },
+    {
+      "prompt_id": "context_summary_v1.0-original",
+      "action": "register",
+      "timestamp": "2026-01-21T15:17:25.755329",
+      "author": "initial_dev"
+    },
+    {
+      "prompt_id": "reply_generation_v1.0-original",
+      "action": "register",
+      "timestamp": "2026-01-21T15:17:25.756143",
+      "author": "initial_dev"
+    },
+    {
+      "prompt_id": "trait_discovery_v1.0-original",
+      "action": "register",
+      "timestamp": "2026-01-21T15:17:25.756863",
+      "author": "initial_dev"
+    },
+    {
+      "prompt_id": "trait_mapping_v1.0-original",
+      "action": "register",
+      "timestamp": "2026-01-21T15:17:25.757741",
+      "author": "initial_dev"
+    },
+    {
+      "prompt_id": "scenario_analysis_v2.0-compact",
+      "action": "register",
+      "timestamp": "2026-01-21T15:17:25.758581",
+      "author": "optimization_team"
+    },
+    {
+      "prompt_id": "context_summary_v2.0-compact",
+      "action": "register",
+      "timestamp": "2026-01-21T15:17:25.759343",
+      "author": "optimization_team"
+    },
+    {
+      "prompt_id": "reply_generation_v2.0-compact",
+      "action": "register",
+      "timestamp": "2026-01-21T15:17:25.760033",
+      "author": "optimization_team"
+    },
+    {
+      "prompt_id": "scenario_analysis_v2.0-compact",
+      "action": "activate",
+      "timestamp": "2026-01-21T15:17:25.780408",
+      "author": "system"
+    },
+    {
+      "prompt_id": "context_summary_v2.0-compact",
+      "action": "activate",
+      "timestamp": "2026-01-21T15:17:25.796081",
+      "author": "system"
+    },
+    {
+      "prompt_id": "reply_generation_v2.0-compact",
+      "action": "activate",
+      "timestamp": "2026-01-21T15:17:25.810714",
+      "author": "system"
+    },
+    {
+      "prompt_id": "trait_discovery_v1.0-original",
+      "action": "activate",
+      "timestamp": "2026-01-21T15:17:25.827512",
+      "author": "system"
+    },
+    {
+      "prompt_id": "trait_mapping_v1.0-original",
+      "action": "activate",
+      "timestamp": "2026-01-21T15:17:25.843927",
+      "author": "system"
+    }
+  ]
+}

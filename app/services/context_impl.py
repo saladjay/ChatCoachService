@@ -6,6 +6,7 @@ from app.models.schemas import (
 from app.services.llm_adapter import BaseLLMAdapter, LLMCall
 
 from app.services.prompt import CONTEXT_SUMMARY_PROMPT
+from app.services.prompt_compact import CONTEXT_SUMMARY_PROMPT_COMPACT, format_conversation_compact
 from user_profile.intimacy import is_recovery_stage, normalize_intimacy_level
 
 
@@ -14,17 +15,25 @@ class ContextBuilder(BaseContextBuilder):
     
     Uses LLM to analyze conversation history and build context.
     """
-    def __init__(self, llm_adapter: BaseLLMAdapter, provider: str | None = None, model: str | None = None):
+    def __init__(
+        self, 
+        llm_adapter: BaseLLMAdapter, 
+        provider: str | None = None, 
+        model: str | None = None,
+        use_compact_prompt: bool = True
+    ):
         """Initialize ContextBuilder with LLM adapter.
         
         Args:
             llm_adapter: LLM adapter for analyzing conversation context
             provider: Optional LLM provider (e.g., "dashscope", "openai")
             model: Optional LLM model name
+            use_compact_prompt: Use compact prompt to reduce tokens (default: True)
         """
         self._llm_adapter = llm_adapter
         self.provider = provider
         self.model = model
+        self.use_compact_prompt = use_compact_prompt
 
     async def build_context(self, input: ContextBuilderInput) -> ContextResult:
         """Build context by analyzing conversation history with LLM.
@@ -36,10 +45,14 @@ class ContextBuilder(BaseContextBuilder):
             ContextResult with analyzed context information.
         """
         # Format conversation history for prompt
-        conversation_text = self._format_conversation(input.history_dialog)
-        
-        # Build prompt
-        prompt = CONTEXT_SUMMARY_PROMPT.format(conversation=conversation_text)
+        if self.use_compact_prompt:
+            # 使用精简版格式（减少 token）
+            conversation_text = format_conversation_compact(input.history_dialog, max_messages=5)
+            prompt = f"[PROMPT:context_summary_compact_v1]\n{CONTEXT_SUMMARY_PROMPT_COMPACT.format(conversation=conversation_text)}"
+        else:
+            # 使用完整版格式（用于调试）
+            conversation_text = self._format_conversation(input.history_dialog)
+            prompt = f"[PROMPT:context_summary_full_v1]\n{CONTEXT_SUMMARY_PROMPT.format(conversation=conversation_text)}"
         
         # Call LLM
         llm_call = LLMCall(
@@ -142,8 +155,8 @@ class ContextBuilder(BaseContextBuilder):
             content = content.strip()
             if not content:
                 continue
-            if len(content) > 80:
-                content = content[:80] + "..."
+            if len(content) > 999:
+                content = content[:999] + "..."
             lines.append(f"{speaker}: {content}")
 
         return " / ".join(lines) if lines else "(no conversation summary)"

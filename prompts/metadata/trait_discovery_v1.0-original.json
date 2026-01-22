@@ -1,0 +1,16 @@
+{
+  "prompt_id": "trait_discovery_v1.0-original",
+  "prompt_type": "trait_discovery",
+  "version": "v1.0-original",
+  "created_at": "2026-01-21T15:17:25.756513",
+  "author": "initial_dev",
+  "description": "Original trait discovery prompt",
+  "tags": [
+    "original",
+    "user_profile"
+  ],
+  "token_estimate": 311,
+  "performance_notes": "Used for learning user traits from conversation.",
+  "is_active": true,
+  "parent_version": null
+}

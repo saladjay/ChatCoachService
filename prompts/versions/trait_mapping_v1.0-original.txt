@@ -1,0 +1,28 @@
+
+Standard traits:
+{standard_traits}
+
+For each input trait:
+- MAP to a standard trait with inferred_value
+- or NEW with new_trait_name
+- or DISCARD if unstable or unimportant
+
+Rules:
+- MAP → inferred_value required
+- NEW/DISCARD → inferred_value = null
+
+Input traits:
+{traits_json}
+
+Output JSON array only:
+[
+  {{
+    "original_trait_name": "...",
+    "action": "MAP|NEW|DISCARD",
+    "target_trait": "...",
+    "new_trait_name": "...",
+    "inferred_value": 0.0,
+    "confidence": 0.0,
+    "reason": "..."
+  }}
+]

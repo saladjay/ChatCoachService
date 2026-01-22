@@ -95,6 +95,7 @@ class Orchestrator:
         persistence_service: PersistenceService | None = None,
         config: OrchestratorConfig | None = None,
         billing_config: BillingConfig | None = None,
+        strategy_planner: 'StrategyPlanner | None' = None,
     ):
         """Initialize the orchestrator with all required services.
         
@@ -108,6 +109,7 @@ class Orchestrator:
             persistence_service: Optional service for persisting conversation summaries.
             config: Orchestrator configuration (retry, timeout settings).
             billing_config: Billing configuration (cost limits).
+            strategy_planner: Optional strategy planner for Phase 2 optimization.
         """
         self.context_builder = context_builder
         self.scene_analyzer = scene_analyzer
@@ -118,6 +120,7 @@ class Orchestrator:
         self.persistence_service = persistence_service
         self.config = config or OrchestratorConfig()
         self.billing_config = billing_config or BillingConfig()
+        self.strategy_planner = strategy_planner
 
     async def generate_reply(
         self, 
@@ -187,9 +190,22 @@ class Orchestrator:
             )
             print(type(persona), type(self.persona_inferencer))
             print("step 3:", persona)
+            
+            # Phase 2: Step 3.5: Plan strategies (optional, if strategy_planner available)
+            strategy_plan = None
+            if self.strategy_planner:
+                strategy_plan = await self._execute_step(
+                    exec_ctx,
+                    "strategy_planning",
+                    self._plan_strategies,
+                    context,
+                    scene,
+                )
+                print("step 3.5 (strategy planning):", strategy_plan)
+            
             # Step 4 & 5: Generate reply with intimacy check (with retries)
             reply_result, intimacy_result = await self._generate_with_retry(
-                exec_ctx, request, context, scene, persona
+                exec_ctx, request, context, scene, persona, strategy_plan
             )
             print("reply_result", reply_result)
             # Record all billing records
@@ -441,6 +457,30 @@ class Orchestrator:
             history_dialog=self._dialogs_to_messages(request.dialogs),
         )
         return await self.persona_inferencer.infer_persona(input_data)
+    
+    async def _plan_strategies(
+        self,
+        context: ContextResult,
+        scene: SceneAnalysisResult,
+    ):
+        """Plan conversation strategies (Phase 2 optimization).
+        
+        Args:
+            context: Context result with conversation summary
+            scene: Scene analysis result
+        
+        Returns:
+            Strategy plan output
+        """
+        from app.services.strategy_planner import StrategyPlanInput
+        
+        input_data = StrategyPlanInput(
+            scene=scene,
+            conversation_summary=context.conversation_summary or "",
+            intimacy_level=scene.intimacy_level,
+            current_intimacy_level=context.current_intimacy_level
+        )
+        return await self.strategy_planner.plan_strategies(input_data)
 
     async def _generate_with_retry(
         self,
@@ -449,6 +489,7 @@ class Orchestrator:
         context: ContextResult,
         scene: SceneAnalysisResult,
         persona: PersonaSnapshot,
+        strategy_plan=None,
     ):
         """Generate reply with retry logic for intimacy check failures.
         
@@ -461,6 +502,7 @@ class Orchestrator:
             context: Built context.
             scene: Scene analysis result.
             persona: Inferred persona.
+            strategy_plan: Optional strategy plan from Phase 2.
         
         Returns:
             Tuple of (LLMResult, IntimacyCheckResult).

@@ -1,0 +1,18 @@
+
+You are a conversation scenario analyst.
+
+Conversation history:
+{conversation}
+
+Classify:
+- Emotion: positive | neutral | negative
+- Intimacy: stranger | familiar | intimate | recovery
+- Scenario: SAFE | BALANCED | RISKY | RECOVERY | NEGATIVE
+
+Output JSON only:
+{{
+  "conversation_summary": "summary",
+  "emotion_state": "positive|neutral|negative",
+  "current_intimacy_level": "stranger|familiar|intimate|recovery",
+  "scenario": "SAFE|BALANCED|RISKY|RECOVERY|NEGATIVE"
+}}

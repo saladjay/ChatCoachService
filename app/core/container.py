@@ -166,6 +166,10 @@ class ServiceContainer:
         if not self.has("scene_analyzer"):
             self.register("scene_analyzer", self._create_scene_analyzer())
 
+        # Phase 2: Register strategy planner (optional, for token optimization)
+        if not self.has("strategy_planner"):
+            self.register("strategy_planner", self._create_strategy_planner())
+
         # Register persona inferencer (uses UserProfile Service in REAL mode)
         if not self.has("persona_inferencer"):
             self.register("persona_inferencer", self._create_persona_inferencer())
@@ -239,6 +243,19 @@ class ServiceContainer:
             return MockSceneAnalyzer()
         llm_adapter = self.get("llm_adapter") if self.has("llm_adapter") else self._create_llm_adapter()
         return SceneAnalyzer(llm_adapter=llm_adapter)
+    
+    def _create_strategy_planner(self):
+        """Create strategy planner for Phase 2 optimization.
+        
+        Returns:
+            StrategyPlanner instance or None if in MOCK mode.
+        """
+        if self._mode == ServiceMode.MOCK:
+            return None  # No strategy planner in mock mode
+        
+        from app.services.strategy_planner import StrategyPlanner
+        llm_adapter = self.get("llm_adapter") if self.has("llm_adapter") else self._create_llm_adapter()
+        return StrategyPlanner(llm_adapter=llm_adapter)
 
     def _create_persona_inferencer(self) -> BasePersonaInferencer:
         """Create persona inferencer based on mode.
@@ -267,7 +284,15 @@ class ServiceContainer:
         # Real implementation uses LLM Adapter
         llm_adapter = self.get("llm_adapter")
         user_profile_service = self.get("user_profile_service")
-        return LLMAdapterReplyGenerator(llm_adapter, user_profile_service)
+        strategy_planner = self.get("strategy_planner") if self.has("strategy_planner") else None
+        
+        # Phase 3: Pass PromptConfig to reply generator
+        return LLMAdapterReplyGenerator(
+            llm_adapter, 
+            user_profile_service,
+            strategy_planner=strategy_planner,
+            prompt_config=self.config.prompt,  # Phase 3
+        )
 
     def _create_intimacy_checker(self) -> BaseIntimacyChecker:
         """Create intimacy checker based on mode.
@@ -357,6 +382,15 @@ class ServiceContainer:
         """
         self._initialize_services()
         return self.get("user_profile_service")
+    
+    def get_strategy_planner(self):
+        """Get the StrategyPlanner service.
+        
+        Returns:
+            StrategyPlanner instance or None if not available.
+        """
+        self._initialize_services()
+        return self.get("strategy_planner") if self.has("strategy_planner") else None
 
     def create_orchestrator(
         self,
@@ -378,6 +412,8 @@ class ServiceContainer:
             fallback_model=self.config.llm.fallback_model,
         )
         
+        strategy_planner = self.get_strategy_planner()
+        
         return Orchestrator(
             context_builder=self.get_context_builder(),
             scene_analyzer=self.get_scene_analyzer(),
@@ -388,6 +424,7 @@ class ServiceContainer:
             persistence_service=persistence_service,
             config=orchestrator_config,
             billing_config=self.config.billing,
+            strategy_planner=strategy_planner,
         )
 
 
