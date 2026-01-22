@@ -306,6 +306,8 @@ class ServiceContainer:
         if self._mode == ServiceMode.MOCK:
             return MockIntimacyChecker()
         cfg = self.config.moderation
+        llm_cfg = self.config.llm
+        llm_adapter = self.get("llm_adapter") if self.has("llm_adapter") else self._create_llm_adapter()
         return ModerationServiceIntimacyChecker(
             base_url=cfg.base_url,
             timeout_seconds=cfg.timeout_seconds,
@@ -313,6 +315,9 @@ class ServiceContainer:
             fail_open=cfg.fail_open,
             use_library=cfg.use_library,
             allow_http_fallback=cfg.allow_http_fallback,
+            llm_adapter=llm_adapter,
+            llm_provider=llm_cfg.default_provider,
+            llm_model=llm_cfg.default_model,
         )
 
     def get_context_builder(self) -> BaseContextBuilder:

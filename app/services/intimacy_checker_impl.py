@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import re
 from typing import Any
 
 import sys
@@ -9,6 +11,99 @@ import httpx
 
 from app.models.schemas import IntimacyCheckInput, IntimacyCheckResult
 from app.services.base import BaseIntimacyChecker
+from app.services.llm_adapter import BaseLLMAdapter, LLMCall
+
+
+class PromptLLMThirdPartyIntimacyAdapter:
+    provider = "app_llm_adapter"
+
+    def __init__(
+        self,
+        llm_adapter: BaseLLMAdapter,
+        provider: str | None = None,
+        model: str | None = None,
+    ) -> None:
+        self._llm_adapter = llm_adapter
+        self._provider = provider
+        self._model = model
+        self.model_version = f"{provider}:{model}" if provider and model else "router"
+
+    async def get_intimacy_score(self, text: str, context: dict[str, Any]) -> float:
+        profile = (context or {}).get("profile") or {}
+        intimacy_stage = profile.get("intimacy_stage")
+        persona = profile.get("persona")
+
+        prompt = (
+            "[PROMPT:intimacy_third_party_llm_v1]\n"
+            "你是一个对话内容审核员，负责评估回复内容在当前关系阶段下是否过度亲密/越界。\n"
+            "请结合关系阶段（intimacy_stage）判断该回复是否‘超过’当前阶段可接受的亲密程度。\n\n"
+            "关系阶段说明（intimacy_stage）：\n"
+            "1=陌生期(stranger)，2=熟人期(acquaintance)，3=朋友期(friend)，"
+            "4=亲密期(intimate)，5=羁绊期(bonded)。\n\n"
+            "输出要求：\n"
+            "- 只输出 JSON：{\"score\": <0~1>}\n"
+            "- score 表示‘越界风险’，0=完全合适，1=严重越界。\n\n"
+            f"persona: {persona}\n"
+            f"intimacy_stage: {intimacy_stage}\n"
+            f"text: {text}\n"
+        )
+
+        llm_call = LLMCall(
+            task_type="qc",
+            prompt=prompt,
+            quality="normal",
+            user_id="system",
+            provider=self._provider,
+            model=self._model,
+            max_tokens=80,
+        )
+
+        try:
+            result = await self._llm_adapter.call(llm_call)
+            score = self._parse_score((result.text or "").strip())
+            if score is None:
+                raise ValueError("LLM response did not contain a valid score")
+            return max(0.0, min(1.0, score))
+        except Exception as e:
+            try:
+                from moderation_service.infrastructure.adapters import ThirdPartyAPIError  # type: ignore
+
+                raise ThirdPartyAPIError(message=str(e), provider=self.provider) from e
+            except ModuleNotFoundError:
+                raise
+
+    def _parse_score(self, text: str) -> float | None:
+        if not text:
+            return None
+
+        if "```" in text:
+            start = text.find("```") + 3
+            end = text.find("```", start)
+            if end != -1:
+                text = text[start:end].strip()
+
+        if "{" in text and "}" in text:
+            start = text.find("{")
+            end = text.rfind("}") + 1
+            text = text[start:end]
+
+        try:
+            parsed = json.loads(text)
+            raw = parsed.get("score")
+            if isinstance(raw, (int, float)):
+                return float(raw)
+            if isinstance(raw, str):
+                return float(raw.strip())
+        except Exception:
+            pass
+
+        m = re.search(r"(-?\d+(?:\.\d+)?)", text)
+        if not m:
+            return None
+        try:
+            return float(m.group(1))
+        except Exception:
+            return None
 
 
 class ModerationServiceIntimacyChecker(BaseIntimacyChecker):
@@ -20,6 +115,9 @@ class ModerationServiceIntimacyChecker(BaseIntimacyChecker):
         fail_open: bool = True,
         use_library: bool = True,
         allow_http_fallback: bool = True,
+        llm_adapter: BaseLLMAdapter | None = None,
+        llm_provider: str | None = None,
+        llm_model: str | None = None,
     ) -> None:
         self._base_url = base_url.rstrip("/")
         self._timeout = timeout_seconds
@@ -27,6 +125,9 @@ class ModerationServiceIntimacyChecker(BaseIntimacyChecker):
         self._fail_open = fail_open
         self._use_library = use_library
         self._allow_http_fallback = allow_http_fallback
+        self._llm_adapter = llm_adapter
+        self._llm_provider = llm_provider
+        self._llm_model = llm_model
         self._client = httpx.AsyncClient(timeout=self._timeout)
 
         self._library_service = None
@@ -47,8 +148,20 @@ class ModerationServiceIntimacyChecker(BaseIntimacyChecker):
                 sys.path.insert(0, str(moderation_root))
             from moderation_service.core.service import ModerationService  # type: ignore
 
+        plugin_config = None
+        if self._llm_adapter is not None:
+            plugin_config = {
+                "intimacy": {
+                    "third_party_adapter": PromptLLMThirdPartyIntimacyAdapter(
+                        llm_adapter=self._llm_adapter,
+                        provider=self._llm_provider,
+                        model=self._llm_model,
+                    )
+                }
+            }
+
         return ModerationService(
-            plugin_config=None,
+            plugin_config=plugin_config,
             default_policy=self._policy,
             default_dimensions=["intimacy"],
         )
