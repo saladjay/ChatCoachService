@@ -7,3 +7,4 @@
 [submodule "core/moderation-service"]
 	path = core/moderation-service
 	url = git@gitlab.zhizitech.org:ai/content-review-service.git
+	branch = main
