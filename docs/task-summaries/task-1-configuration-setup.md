@@ -46,7 +46,6 @@ The configuration system supports multiple sources with the following precedence
 3. Default values (lowest priority)
 
 ### Environment Variable Overrides
-- `V1_SCREENSHOT__SUPPORTED_APPS` - Comma-separated list of apps
 - `V1_SCREENSHOT__SUPPORTED_LANGUAGES` - Comma-separated list of languages
 - `V1_SCREENSHOT__DEFAULT_CONF_THRESHOLD` - Float value 0.0-1.0
 - `V1_LOGGING__LEVEL` - Logging level string
@@ -81,7 +80,6 @@ from app.core.v1_config import get_v1_config
 config = get_v1_config()
 
 # Access screenshot config
-print(config.screenshot.supported_apps)
 print(config.screenshot.supported_languages)
 print(config.screenshot.default_conf_threshold)
 

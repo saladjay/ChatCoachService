@@ -166,8 +166,6 @@ class Orchestrator:
                 self._build_context,
                 request,
             )
-            print(type(context), type(self.context_builder))
-            print("step 1:", context)
             
             # Step 2: Analyze scene (传递 context 以获取当前亲密度)
             scene = await self._execute_step(
@@ -177,8 +175,6 @@ class Orchestrator:
                 request,
                 context,  # 传递 context
             )
-            print(type(scene), type(self.scene_analyzer))
-            print("step 2:", scene)
             
             # Step 3: Infer persona
             persona = await self._execute_step(
@@ -188,8 +184,6 @@ class Orchestrator:
                 request,
                 scene,
             )
-            print(type(persona), type(self.persona_inferencer))
-            print("step 3:", persona)
             
             # Phase 2: Step 3.5: Plan strategies (optional, if strategy_planner available)
             strategy_plan = None
@@ -201,13 +195,11 @@ class Orchestrator:
                     context,
                     scene,
                 )
-                print("step 3.5 (strategy planning):", strategy_plan)
             
             # Step 4 & 5: Generate reply with intimacy check (with retries)
             reply_result, intimacy_result = await self._generate_with_retry(
                 exec_ctx, request, context, scene, persona, strategy_plan
             )
-            print("reply_result", reply_result)
             # Record all billing records
             for record in exec_ctx.billing_records:
                 await self.billing_service.record_call(record)
@@ -234,7 +226,6 @@ class Orchestrator:
             
         except Exception as e:
             # Log error and return friendly response (Requirement 4.5)
-            print(traceback.format_exc())
             logger.exception(f"Orchestration error: {e}")
             raise OrchestrationError(
                 message="An error occurred during generation",
@@ -363,7 +354,6 @@ class Orchestrator:
         """
         try:
             messages = self._dialogs_to_messages(request.dialogs)
-            print("start to build input data")
             input_data = ContextBuilderInput(
                 user_id=request.user_id,
                 target_id=request.target_id,
@@ -371,7 +361,6 @@ class Orchestrator:
                 history_dialog=messages,
                 emotion_trend=None,
             )
-            print("_build_context", request.dialogs, type(self.context_builder))
             result = await self.context_builder.build_context(input_data)
 
             if self.persistence_service is not None and result.conversation_summary:
@@ -406,7 +395,6 @@ class Orchestrator:
 
             return result
         except Exception as e:
-            print(traceback.format_exc())
             raise ContextBuildError(
                 message=f"Failed to build context: {e}",
                 conversation_id=request.conversation_id,
@@ -525,7 +513,6 @@ class Orchestrator:
                     persona=persona,
                     language=request.language,  # 传递语言参数
                 )
-                print('reply_generator', type(self.reply_generator))
                 reply_result = await self._execute_step(
                     exec_ctx,
                     f"reply_generation_attempt_{attempt + 1}",

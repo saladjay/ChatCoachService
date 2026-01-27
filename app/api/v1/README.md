@@ -45,7 +45,6 @@ The API supports the following languages:
 
 Configuration can be overridden using environment variables with the `V1_` prefix:
 
-- `V1_SCREENSHOT__SUPPORTED_APPS`: Comma-separated list of supported apps
 - `V1_SCREENSHOT__SUPPORTED_LANGUAGES`: Comma-separated list of supported languages
 - `V1_SCREENSHOT__DEFAULT_CONF_THRESHOLD`: Default confidence threshold (0.0-1.0)
 - `V1_LOGGING__LEVEL`: Main logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)

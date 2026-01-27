@@ -171,7 +171,6 @@ def get_v1_screenshot_processor() -> ScreenshotProcessor:
         _screenshot_processor = ScreenshotProcessor(config.screenshot)
         logger.info(
             f"ScreenshotProcessor initialized with config: "
-            f"apps={config.screenshot.supported_apps}, "
             f"languages={config.screenshot.supported_languages}, "
             f"threshold={config.screenshot.default_conf_threshold}"
         )

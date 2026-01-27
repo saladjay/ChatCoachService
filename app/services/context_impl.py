@@ -20,10 +20,11 @@ class ContextBuilder(BaseContextBuilder):
         llm_adapter: BaseLLMAdapter, 
         provider: str | None = None, 
         model: str | None = None,
-        use_compact_prompt: bool = True
+        use_compact_prompt: bool = True,
+        context_max_messages: int = 20,
     ):
         """Initialize ContextBuilder with LLM adapter.
-        
+
         Args:
             llm_adapter: LLM adapter for analyzing conversation context
             provider: Optional LLM provider (e.g., "dashscope", "openai")
@@ -34,6 +35,7 @@ class ContextBuilder(BaseContextBuilder):
         self.provider = provider
         self.model = model
         self.use_compact_prompt = use_compact_prompt
+        self.context_max_messages = max(1, int(context_max_messages))
 
     async def build_context(self, input: ContextBuilderInput) -> ContextResult:
         """Build context by analyzing conversation history with LLM.
@@ -47,7 +49,10 @@ class ContextBuilder(BaseContextBuilder):
         # Format conversation history for prompt
         if self.use_compact_prompt:
             # 使用精简版格式（减少 token）
-            conversation_text = format_conversation_compact(input.history_dialog, max_messages=5)
+            conversation_text = format_conversation_compact(
+                input.history_dialog,
+                max_messages=self.context_max_messages,
+            )
             prompt = f"[PROMPT:context_summary_compact_v1]\n{CONTEXT_SUMMARY_PROMPT_COMPACT.format(conversation=conversation_text)}"
         else:
             # 使用完整版格式（用于调试）
@@ -56,7 +61,7 @@ class ContextBuilder(BaseContextBuilder):
         
         # Call LLM
         llm_call = LLMCall(
-            task_type="scene",
+            task_type="context_builder",
             prompt=prompt,
             quality="normal",
             user_id=input.user_id,
