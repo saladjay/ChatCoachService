@@ -355,10 +355,6 @@ start_server.ps1   # Windows
 Check `config.yaml` for supported values:
 ```yaml
 v1_api:
-  supported_apps:
-    - whatsapp
-    - telegram
-    - discord
   supported_languages:
     - en
     - zh

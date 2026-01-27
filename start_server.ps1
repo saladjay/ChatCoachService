@@ -53,6 +53,17 @@ if (Test-Path ".env") {
     }
 }
 
+$scriptArgs = @($args)
+if ($scriptArgs -contains "--log-prompt") {
+    $env:TRACE_ENABLED = "true"
+    $env:TRACE_LOG_LLM_PROMPT = "true"
+    if (-not $env:TRACE_LEVEL) {
+        $env:TRACE_LEVEL = "debug"
+    }
+    Write-Host "✓ LLM prompt logging enabled (TRACE_ENABLED=true, TRACE_LOG_LLM_PROMPT=true)" -ForegroundColor Green
+    $scriptArgs = $scriptArgs | Where-Object { $_ -ne "--log-prompt" }
+}
+
 Write-Host ""
 Write-Host "Starting server on http://localhost:8000" -ForegroundColor Green
 Write-Host "Press Ctrl+C to stop the server" -ForegroundColor Yellow
@@ -64,4 +75,4 @@ Write-Host "  - Screenshot parse: http://localhost:8000/api/v1/chat_screenshot/p
 Write-Host ""
 
 # Start the server
-python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload @scriptArgs

@@ -4,14 +4,6 @@
 v1:
   # Screenshot processing configuration
   screenshot:
-    supported_apps:
-      - whatsapp
-      - telegram
-      - discord
-      - wechat
-      - line
-      - instagram
-    
     supported_languages:
       - en
       - zh

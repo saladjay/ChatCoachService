@@ -5,15 +5,6 @@
 v1:
   # Screenshot processing configuration
   screenshot:
-    # List of supported chat applications
-    supported_apps:
-      - whatsapp
-      - telegram
-      - discord
-      - wechat
-      - line
-      - instagram
-    
     # List of supported languages
     supported_languages:
       - en    # English
@@ -48,7 +39,6 @@ v1:
     submodule_level: "WARNING"
 
 # Environment variable overrides:
-# - V1_SCREENSHOT__SUPPORTED_APPS: Comma-separated list of apps
 # - V1_SCREENSHOT__SUPPORTED_LANGUAGES: Comma-separated list of languages
 # - V1_SCREENSHOT__DEFAULT_CONF_THRESHOLD: Float value 0.0-1.0
 # - V1_LOGGING__LEVEL: Logging level string

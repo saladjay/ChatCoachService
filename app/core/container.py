@@ -251,7 +251,10 @@ class ServiceContainer:
             return MockContextBuilder()
         # Real implementation uses LLM Adapter for context analysis
         llm_adapter = self.get("llm_adapter") if self.has("llm_adapter") else self._create_llm_adapter()
-        return ContextBuilder(llm_adapter=llm_adapter)
+        return ContextBuilder(
+            llm_adapter=llm_adapter,
+            context_max_messages=self.config.prompt.context_max_messages,
+        )
 
     def _create_scene_analyzer(self) -> BaseSceneAnalyzer:
         """Create scene analyzer based on mode.

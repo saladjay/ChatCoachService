@@ -93,7 +93,6 @@ def test_property_9_coordinate_normalization_bounds(data):
     
     # Create screenshot processor
     config = ScreenshotConfig(
-        supported_apps=["whatsapp", "telegram"],
         supported_languages=["en", "zh"],
         default_conf_threshold=0.5
     )
@@ -132,7 +131,6 @@ def test_property_9_coordinate_normalization_bounds(data):
 def test_coordinate_normalization_edge_cases(image_width, image_height):
     """Test coordinate normalization with edge cases like boxes at image boundaries."""
     config = ScreenshotConfig(
-        supported_apps=["whatsapp", "telegram"],
         supported_languages=["en", "zh"],
         default_conf_threshold=0.5
     )
@@ -192,7 +190,6 @@ def test_coordinate_normalization_edge_cases(image_width, image_height):
 def test_coordinate_normalization_with_padding(image_width, image_height, pad_percent):
     """Test coordinate normalization with various padding configurations."""
     config = ScreenshotConfig(
-        supported_apps=["whatsapp", "telegram"],
         supported_languages=["en", "zh"],
         default_conf_threshold=0.5
     )
@@ -250,7 +247,6 @@ def test_coordinate_normalization_with_padding(image_width, image_height, pad_pe
 def test_coordinate_normalization_clamping(image_width, image_height):
     """Test that coordinates outside image bounds are clamped to [0.0, 1.0]."""
     config = ScreenshotConfig(
-        supported_apps=["whatsapp", "telegram"],
         supported_languages=["en", "zh"],
         default_conf_threshold=0.5
     )

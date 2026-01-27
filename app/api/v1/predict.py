@@ -10,10 +10,11 @@ Requirements: 3.1, 3.2, 3.3, 3.4, 3.5, 3.6, 3.7, 3.8, 3.9, 3.10, 3.11, 3.12,
 
 import logging
 import time
-
+import json
 from fastapi import APIRouter, HTTPException
 
 from app.models.v1_api import PredictRequest, PredictResponse, ImageResult, DialogItem, ErrorResponse
+from app.services.llm_adapter import LLMAdapterError, LLMCall, create_llm_adapter
 from app.core.v1_dependencies import (
     ScreenshotAnalysisServiceDep,
     OrchestratorDep,
@@ -108,13 +109,18 @@ async def predict(
         results: list[ImageResult] = []
         all_dialogs = []
         
+        # Handle text Q&A scenario (scene == 2)
+        if request.scene == 2: 
+            return await handle_text_qa(request, start_time, metrics)
+
+        # Process image content and 文本和图片混合
+        # TODO: Implement image and text processing logic here
         for content_url in request.content:
             try:
                 logger.info(f"Processing content: {content_url}")
                 
                 # Use analyze_chat_image to process screenshot
                 output_payload = await screenshot_service.analyze_screenshot(content_url)
-                
                 
                 # Convert output_payload to ImageResult with DialogItem objects
                 dialogs = []
@@ -212,6 +218,7 @@ async def predict(
                         "text": dialog.text,
                     })
                 
+                logger.info(f'conversation:{conversation}')
                 # Requirement 9.3: Call Orchestrator with user_id, conversation, language
                 if orchestrator is not None:
                     from app.models.api import GenerateReplyRequest
@@ -229,7 +236,17 @@ async def predict(
                     
                     # Requirement 9.4: Include suggested_replies in response if successful
                     if orchestrator_response and hasattr(orchestrator_response, 'reply_text'):
-                        suggested_replies = [orchestrator_response.reply_text]
+                        try:
+                            reply_text = json.loads(orchestrator_response.reply_text)
+                            if isinstance(reply_text, dict):
+                                suggested_reply_items = reply_text.get("replies", [])
+                                suggested_replies = [item.get("text", "") for item in suggested_reply_items]
+                            else:
+                                suggested_replies = []
+                                raise ValueError("Reply text is not a dictionary")
+                        except:
+                            suggested_replies = []
+                            raise ValueError("Failed to parse reply text as JSON")
                         logger.info(f"Reply generation successful: {len(suggested_replies)} replies")
                 else:
                     logger.warning("Orchestrator not available, skipping reply generation")
@@ -264,6 +281,106 @@ async def predict(
         logger.exception(f"Unexpected error in predict endpoint: {e}")
         metrics.record_request("predict", 500, int((time.time() - start_time) * 1000))
         
+        return PredictResponse(
+            success=False,
+            message=f"Internal server error: {str(e)}",
+            user_id=request.user_id,
+            request_id=request.request_id,
+            session_id=request.session_id,
+            scene=request.scene,
+            results=[],
+        )
+
+
+async def handle_text_qa(
+    request: PredictRequest,
+    start_time: float,
+    metrics: MetricsCollectorDep,
+) -> PredictResponse:
+    question = "\n".join([c.strip() for c in request.content if c and c.strip()])
+    if not question:
+        metrics.record_request(
+            "predict",
+            400,
+            int((time.time() - start_time) * 1000),
+        )
+        return PredictResponse(
+            success=False,
+            message="Empty question content",
+            user_id=request.user_id,
+            request_id=request.request_id,
+            session_id=request.session_id,
+            scene=request.scene,
+            results=[],
+        )
+
+    if request.language == "zh":
+        prompt = f"请用中文回答用户问题。\n\n用户问题：\n{question}\n"
+    else:
+        prompt = f"Answer the user's question clearly and helpfully.\n\nUser question:\n{question}\n"
+
+    try:
+        llm_adapter = create_llm_adapter()
+        llm_result = await llm_adapter.call(
+            LLMCall(
+                task_type="generation",
+                prompt=prompt,
+                quality="normal",
+                user_id=request.user_id,
+            )
+        )
+
+        duration_ms = int((time.time() - start_time) * 1000)
+        metrics.record_request("predict", 200, duration_ms)
+
+        return PredictResponse(
+            success=True,
+            message="成功",
+            user_id=request.user_id,
+            request_id=request.request_id,
+            session_id=request.session_id,
+            scene=request.scene,
+            results=[
+                ImageResult(
+                    content=question,
+                    dialogs=[
+                        DialogItem(
+                            position=[0.0, 0.0, 1.0, 1.0],
+                            text=question,
+                            speaker="user",
+                            from_user=True,
+                        )
+                    ],
+                    scenario="",
+                )
+            ],
+            suggested_replies=[llm_result.text],
+        )
+
+    except LLMAdapterError as e:
+        logger.error(f"Text Q&A LLM call failed: {e}")
+        metrics.record_request(
+            "predict",
+            500,
+            int((time.time() - start_time) * 1000),
+        )
+        return PredictResponse(
+            success=False,
+            message=f"LLM error: {str(e)}",
+            user_id=request.user_id,
+            request_id=request.request_id,
+            session_id=request.session_id,
+            scene=request.scene,
+            results=[],
+        )
+
+    except Exception as e:
+        logger.exception(f"Text Q&A failed: {e}")
+        metrics.record_request(
+            "predict",
+            500,
+            int((time.time() - start_time) * 1000),
+        )
         return PredictResponse(
             success=False,
             message=f"Internal server error: {str(e)}",
