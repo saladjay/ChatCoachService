@@ -22,6 +22,7 @@ class PromptVersion(Enum):
     V1_ORIGINAL = "v1.0-original"
     V2_COMPACT = "v2.0-compact"
     V2_1_OPTIMIZED = "v2.1-optimized"
+    V3_0_COMPACT = "v3.0-compact"
     V3_1_COMPACT_V2 = "v3.1-compact_v2"
     V3_1_COMPACT_V2_WITH_REASONING = "v3.1-compact_v2_with_reasoning"
     V3_2_COMPACT_V2_WITHOUT_REASONING = "v3.2-compact_v2_no_reasoning"
