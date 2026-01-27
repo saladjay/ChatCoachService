@@ -20,7 +20,8 @@ from app.core.v1_dependencies import (
     OrchestratorDep,
     MetricsCollectorDep,
 )
-
+from app.core.dependencies import SessionCategorizedCacheServiceDep, ScreenshotParserDep
+from app.models.screenshot import ParseScreenshotRequest
 
 logger = logging.getLogger(__name__)
 
@@ -65,24 +66,27 @@ router = APIRouter(tags=["predict"])
 async def predict(
     request: PredictRequest,
     screenshot_service: ScreenshotAnalysisServiceDep,
+    screenshot_parser: ScreenshotParserDep,
     orchestrator: OrchestratorDep,
     metrics: MetricsCollectorDep,
+    cache_service: SessionCategorizedCacheServiceDep,
 ) -> PredictResponse:
     """
     识别聊天截图中的对话内容并可选生成回复建议
     
     This endpoint performs the following steps:
     1. Validate request parameters (handled by Pydantic model)
-    2. Process each screenshot URL using analyze_chat_image
-    3. Extract structured dialog data (position, text, speaker, from_user)
-    4. If reply=true, format dialogs and call Orchestrator
-    5. Return unified response with results and optional suggested_replies
+    2. Process each screenshot URL to extract dialogs
+    3. If reply=true, calls Orchestrator to generate suggested replies
+    4. Returns structured results with dialogs and optional replies
     
     Args:
         request: PredictRequest with content, language, scene, user_id, etc.
         screenshot_service: ScreenshotAnalysisService dependency
+        screenshot_parser: ScreenshotParserService dependency
         orchestrator: Orchestrator service dependency
         metrics: MetricsCollector service dependency
+        cache_service: SessionCategorizedCacheService dependency
     
     Returns:
         PredictResponse with success status, results, and optional suggested_replies
@@ -104,173 +108,54 @@ async def predict(
     if request.other_properties:
         logger.info(f"other_properties: {request.other_properties}")
     
+    # 验证cache中的scene是否符合当前request的scene
     try:
-        # Process each content item (image URL)
-        results: list[ImageResult] = []
-        all_dialogs = []
-        
-        # Handle text Q&A scenario (scene == 2)
-        if request.scene == 2: 
-            return await handle_text_qa(request, start_time, metrics)
-
-        # Process image content and 文本和图片混合
-        # TODO: Implement image and text processing logic here
-        for content_url in request.content:
-            try:
-                logger.info(f"Processing content: {content_url}")
-                
-                # Use analyze_chat_image to process screenshot
-                output_payload = await screenshot_service.analyze_screenshot(content_url)
-                
-                # Convert output_payload to ImageResult with DialogItem objects
-                dialogs = []
-                for dialog_data in output_payload.get("dialogs", []):
-                    # Extract box coordinates (in pixels)
-                    box = dialog_data.get("box", [0, 0, 0, 0])
-                    
-                    # Get speaker and determine from_user
-                    speaker = dialog_data.get("speaker", "user")
-                    from_user = (speaker == "self")
-                    
-                    # Create DialogItem with normalized coordinates
-                    dialog_item = DialogItem(
-                        position=box,
-                        text=dialog_data.get("text", ""),
-                        speaker=speaker,
-                        from_user=from_user,
+        normalized_scene = 1 if request.scene in (1, 3) else request.scene
+        if cache_service is not None:
+            cached_scene_event = await cache_service.get_resource_category_last(
+                session_id=request.session_id,
+                category="scene_type",
+                resource="__scene__",
+            )
+            if cached_scene_event:
+                cached_payload = cached_scene_event.get("payload")
+                cached_scene = None
+                if isinstance(cached_payload, dict):
+                    cached_scene = cached_payload.get("scene")
+                if cached_scene is not None and cached_scene != normalized_scene:
+                    logger.warning(
+                        "Scene mismatch for session %s: cached=%s current=%s",
+                        request.session_id,
+                        cached_scene,
+                        normalized_scene,
                     )
-                    dialogs.append(dialog_item)
-                    all_dialogs.append(dialog_item)
-                
-                # Get scenario from output_payload or use default
-                scenario = output_payload.get("scenario", "")
-                
-                image_result = ImageResult(
-                    content=content_url,
-                    dialogs=dialogs,
-                    scenario=scenario
-                )
-                
-                results.append(image_result)
-                logger.info(f"Content processed successfully: {len(dialogs)} dialogs extracted")
-                
-            except Exception as e:
-                error_msg = str(e)
-                
-                # Determine error type and handle accordingly
-                if "not available" in error_msg.lower() or "model" in error_msg.lower():
-                    # Requirement 7.1: Handle model unavailable errors (HTTP 401)
-                    logger.error(f"Model unavailable for {content_url}: {e}")
-                    metrics.record_request("predict", 401, int((time.time() - start_time) * 1000))
-                    
                     raise HTTPException(
-                        status_code=401,
-                        detail="Model Unavailable",
+                        status_code=400,
+                        detail="Scene mismatch for session",
                     )
-                
-                elif "load" in error_msg.lower() or "download" in error_msg.lower():
-                    # Requirement 7.2: Handle image load errors (HTTP 400)
-                    logger.error(f"Image load failed for {content_url}: {e}")
-                    metrics.record_request("predict", 400, int((time.time() - start_time) * 1000))
-                    
-                    return PredictResponse(
-                        success=False,
-                        message=f"Load image failed: {str(e)}",
-                        user_id=request.user_id,
-                        request_id=request.request_id,
-                        session_id=request.session_id,
-                        scene=request.scene,
-                        results=[],
-                    )
-                
-                else:
-                    # Requirement 7.3: Handle inference errors (HTTP 500)
-                    logger.error(f"Inference failed for {content_url}: {e}", exc_info=True)
-                    metrics.record_request("predict", 500, int((time.time() - start_time) * 1000))
-                    
-                    return PredictResponse(
-                        success=False,
-                        message=f"Inference error: {str(e)}",
-                        user_id=request.user_id,
-                        request_id=request.request_id,
-                        session_id=request.session_id,
-                        scene=request.scene,
-                        results=[],
-                    )
+            else:
+                await cache_service.append_event(
+                    session_id=request.session_id,
+                    category="scene_type",
+                    resource="__scene__",
+                    payload={"scene": normalized_scene},
+                )
+
+        # Handle text Q&A scenario (scene == 2)
+        if normalized_scene == 2:
+            return await handle_text_qa(request, start_time, metrics)
         
-        # Initialize suggested_replies as None
-        suggested_replies = None
-        current_scenario = None
-        recommended_scenario = None
-        recommended_strategies = None
-        
-        # If reply generation is requested, call Orchestrator
-        # Requirements: 3.8, 3.9, 3.11, 9.1, 9.2, 9.3, 9.4, 9.5
-        if request.reply and all_dialogs:
-            try:
-                logger.info("Reply generation requested, calling Orchestrator")
-                
-                # Requirement 9.2: Format dialogs as conversation history
-                conversation = []
-                for dialog in all_dialogs:
-                    conversation.append({
-                        "speaker": dialog.speaker,
-                        "text": dialog.text,
-                    })
-                
-                logger.info(f'conversation:{conversation}')
-                # Requirement 9.3: Call Orchestrator with user_id, conversation, language
-                if orchestrator is not None:
-                    from app.models.api import GenerateReplyRequest
-                    
-                    orchestrator_request = GenerateReplyRequest(
-                        user_id=request.user_id,
-                        target_id="unknown",  # Not available from screenshot, use placeholder
-                        conversation_id=request.session_id,
-                        dialogs=conversation,
-                        language=request.language,
-                        quality="normal",
-                    )
-                    
-                    orchestrator_response = await orchestrator.generate_reply(orchestrator_request)
-                    
-                    # Requirement 9.4: Include suggested_replies in response if successful
-                    if orchestrator_response and hasattr(orchestrator_response, 'reply_text'):
-                        try:
-                            reply_text = json.loads(orchestrator_response.reply_text)
-                            if isinstance(reply_text, dict):
-                                suggested_reply_items = reply_text.get("replies", [])
-                                suggested_replies = [item.get("text", "") for item in suggested_reply_items]
-                            else:
-                                suggested_replies = []
-                                raise ValueError("Reply text is not a dictionary")
-                        except:
-                            suggested_replies = []
-                            raise ValueError("Failed to parse reply text as JSON")
-                        logger.info(f"Reply generation successful: {len(suggested_replies)} replies")
-                else:
-                    logger.warning("Orchestrator not available, skipping reply generation")
-                
-            except Exception as e:
-                # Requirement 9.5: Handle Orchestrator failures gracefully
-                logger.error(f"Reply generation failed: {e}", exc_info=True)
-                # Continue without replies - don't fail the entire request
-        
-        # Record successful request
-        duration_ms = int((time.time() - start_time) * 1000)
-        metrics.record_request("predict", 200, duration_ms)
-        
-        # Return successful response
-        return PredictResponse(
-            success=True,
-            message="成功",
-            user_id=request.user_id,
-            request_id=request.request_id,
-            session_id=request.session_id,
-            scene=request.scene,
-            results=results,
-            suggested_replies=suggested_replies,
-        )
+        # Handle image and text scenario (scene == 1)
+        if normalized_scene == 1:
+            return await handle_image(
+                request,
+                screenshot_service,
+                screenshot_parser,
+                orchestrator,
+                start_time,
+                metrics,
+                cache_service,
+            )
         
     except HTTPException:
         # Re-raise HTTP exceptions
@@ -291,6 +176,266 @@ async def predict(
             results=[],
         )
 
+
+async def handle_image(
+    request: PredictRequest,
+    screenshot_service: ScreenshotAnalysisServiceDep,
+    screenshot_parser: ScreenshotParserDep,
+    orchestrator: OrchestratorDep,
+    start_time: float,
+    metrics: MetricsCollectorDep,
+    cache_service: SessionCategorizedCacheServiceDep,
+) -> PredictResponse:
+    # Process each content item (image URL)
+    results: list[ImageResult] = []
+    all_dialogs = []
+        
+    for content_url in request.content:
+        try:
+            logger.info(f"Processing content: {content_url}")
+            cached_event = await cache_service.get_resource_category_last(
+                session_id=request.session_id,
+                category="image_result",
+                resource=content_url,
+            )
+            if cached_event:
+                cached_payload = cached_event.get("payload")
+                if isinstance(cached_payload, dict):
+                    cached_result = ImageResult(**cached_payload)
+                    logger.info(f"Using cached result for {content_url}")
+                    results.append(cached_result)
+                    all_dialogs.append(cached_result.dialogs)
+                    continue
+
+            # Use analyze_chat_image to process screenshot
+            dialogs = []
+            scenario = ""
+            try:
+                output_payload = await screenshot_service.analyze_screenshot(content_url)
+                for dialog_data in output_payload.get("dialogs", []):
+                    # Extract box coordinates (in pixels)
+                    box = dialog_data.get("box", [0, 0, 0, 0])
+                    
+                    # Get speaker and determine from_user
+                    speaker = dialog_data.get("speaker", "unknown")
+                    from_user = (speaker == "user")
+                    
+                    # Create DialogItem with normalized coordinates
+                    dialog_item = DialogItem(
+                        position=box,
+                        text=dialog_data.get("text", ""),
+                        speaker=speaker,
+                        from_user=from_user,
+                    )
+                    dialogs.append(dialog_item)
+                
+                # Get scenario from output_payload or use default
+                scenario = output_payload.get("scenario", "")
+            except Exception as e:
+                logger.error(f"Error analyzing screenshot {content_url}: {e}")
+                if screenshot_parser is not None:
+                    parser_request = ParseScreenshotRequest(
+                        image_url=content_url,
+                        session_id=request.session_id,
+                    )
+                    parser_response = await screenshot_parser.parse_screenshot(parser_request)
+                    if parser_response.code == 0 and parser_response.data is not None:
+                        for bubble in parser_response.data.bubbles:
+                            dialog_item = DialogItem(
+                                position=[
+                                    bubble.bbox.x1,
+                                    bubble.bbox.y1,
+                                    bubble.bbox.x2,
+                                    bubble.bbox.y2,
+                                ],
+                                text=bubble.text,
+                                speaker=bubble.sender,
+                                from_user=(bubble.sender == "user"),
+                            )
+                            dialogs.append(dialog_item)
+                    else:
+                        raise
+                else:
+                    raise
+            
+            image_result = ImageResult(
+                content=content_url,
+                dialogs=dialogs,
+                scenario=scenario
+            )
+
+            results.append(image_result)
+            logger.info(f"Content processed successfully: {len(dialogs)} dialogs extracted")
+            all_dialogs.append(dialogs)
+            await cache_service.append_event(
+                session_id=request.session_id,
+                category="image_result",
+                resource=content_url,
+                payload=image_result.model_dump(mode="json"),
+            )
+        except Exception as e:
+            error_msg = str(e)
+            
+            # Determine error type and handle accordingly
+            if "not available" in error_msg.lower() or "model" in error_msg.lower():
+                # Requirement 7.1: Handle model unavailable errors (HTTP 401)
+                logger.error(f"Model unavailable for {content_url}: {e}")
+                metrics.record_request("predict", 401, int((time.time() - start_time) * 1000))
+                
+                raise HTTPException(
+                    status_code=401,
+                    detail="Model Unavailable",
+                )
+            
+            elif "load" in error_msg.lower() or "download" in error_msg.lower():
+                # Requirement 7.2: Handle image load errors (HTTP 400)
+                logger.error(f"Image load failed for {content_url}: {e}")
+                metrics.record_request("predict", 400, int((time.time() - start_time) * 1000))
+                
+                return PredictResponse(
+                    success=False,
+                    message=f"Load image failed: {str(e)}",
+                    user_id=request.user_id,
+                    request_id=request.request_id,
+                    session_id=request.session_id,
+                    scene=request.scene,
+                    results=[],
+                )
+            
+            else:
+                # Requirement 7.3: Handle inference errors (HTTP 500)
+                logger.error(f"Inference failed for {content_url}: {e}", exc_info=True)
+                metrics.record_request("predict", 500, int((time.time() - start_time) * 1000))
+                
+                return PredictResponse(
+                    success=False,
+                    message=f"Inference error: {str(e)}",
+                    user_id=request.user_id,
+                    request_id=request.request_id,
+                    session_id=request.session_id,
+                    scene=request.scene,
+                    results=[],
+                )
+
+        
+    # Initialize suggested_replies as None
+    suggested_replies = None
+    current_scenario = None
+    recommended_scenario = None
+    recommended_strategies = None
+
+    # If only scene analysis is requested
+    if request.scene_analysis and not request.reply and all_dialogs:
+        try:
+            logger.info("Scene analysis requested, calling Orchestrator")
+            
+            for url_index, dialog in enumerate(all_dialogs):
+                logger.info(f"Dialog: {dialog}")
+                # Requirement 9.2: Format dialogs as conversation history
+                conversation = []
+                for dialog_item in dialog:
+                    conversation.append({
+                        "speaker": dialog_item.speaker,
+                        "text": dialog_item.text,
+                    })
+                
+                logger.info(f'conversation:{conversation}')
+                # Requirement 9.3: Call Orchestrator with user_id, conversation, language
+                if orchestrator is not None:
+                    from app.models.api import GenerateReplyRequest
+                    
+                    orchestrator_request = GenerateReplyRequest(
+                        user_id=request.user_id,
+                        target_id="unknown",  # Not available from screenshot, use placeholder
+                        conversation_id=request.session_id,
+                        resource=request.content[url_index],
+                        dialogs=conversation,
+                        language=request.language,
+                        quality="normal",
+                    )
+
+                    scenario_analysis_result = await orchestrator.scenario_analysis(orchestrator_request)
+                    # current_scenario: str = ""  # 当前情景（安全/低风险策略|平衡/中风险策略|高风险/高回报策略|关系修复策略|禁止的策略）
+                    # recommended_scenario: str = ""  # 推荐情景
+                    # recommended_strategies: list[str] = Field(default_factory=list)  # 推荐的对话策略（3个策略代码）
+                    results[url_index].scenario = f"current scenario:{scenario_analysis_result.current_scenario}, \
+                    recommended scenario:{scenario_analysis_result.recommended_scenario}, \
+                    recommended strategies:{scenario_analysis_result.recommended_strategies}"
+                else:
+                    logger.warning("Orchestrator not available, skipping reply generation")
+            
+        except Exception as e:
+            # Requirement 9.5: Handle Orchestrator failures gracefully
+            logger.error(f"Reply generation failed: {e}", exc_info=True)
+            # Continue without replies - don't fail the entire request
+
+    # If reply generation is requested, call Orchestrator
+    if request.reply and all_dialogs:
+        try:
+            logger.info("Reply generation requested, calling Orchestrator")
+            
+            for url_index, dialog in enumerate(all_dialogs):
+                logger.info(f"Dialog: {dialog}")
+                # Requirement 9.2: Format dialogs as conversation history
+                conversation = []
+                for dialog_item in dialog:
+                    conversation.append({
+                        "speaker": dialog_item.speaker,
+                        "text": dialog_item.text,
+                    })
+                
+                logger.info(f'conversation:{conversation}')
+                # Requirement 9.3: Call Orchestrator with user_id, conversation, language
+                if orchestrator is not None:
+                    from app.models.api import GenerateReplyRequest
+                    
+                    orchestrator_request = GenerateReplyRequest(
+                        user_id=request.user_id,
+                        target_id="unknown",  # Not available from screenshot, use placeholder
+                        conversation_id=request.session_id,
+                        resource=request.content[url_index],
+                        dialogs=conversation,
+                        language=request.language,
+                        quality="normal",
+                    )
+
+                    orchestrator_response = await orchestrator.generate_reply(orchestrator_request)
+                    # Requirement 9.4: Include suggested_replies in response if successful
+                    if orchestrator_response and hasattr(orchestrator_response, "reply_text"):
+                        try:
+                            reply_text = json.loads(orchestrator_response.reply_text)
+                            if isinstance(reply_text, dict):
+                                suggested_reply_items = reply_text.get("replies", [])
+                                suggested_replies = [item.get("text", "") for item in suggested_reply_items]
+                            else:
+                                suggested_replies = []
+                        except Exception as exc:
+                            suggested_replies = []
+                            raise ValueError("Failed to parse reply text as JSON") from exc
+                    logger.info(f"Reply generation successful: {len(suggested_replies)} replies")
+                else:
+                    logger.warning("Orchestrator not available, skipping reply generation")
+            
+        except Exception as e:
+            # Requirement 9.5: Handle Orchestrator failures gracefully
+            logger.error(f"Reply generation failed: {e}", exc_info=True)
+            # Continue without replies - don't fail the entire request
+
+    # Record successful request
+    duration_ms = int((time.time() - start_time) * 1000)
+    metrics.record_request("predict", 200, duration_ms)
+
+    # Return successful response
+    return PredictResponse(
+        success=True,
+        message="成功",
+        user_id=request.user_id,
+        request_id=request.request_id,
+        session_id=request.session_id,
+        scene=request.scene,
+        results=results,
+        suggested_replies=suggested_replies,
+    )
 
 async def handle_text_qa(
     request: PredictRequest,

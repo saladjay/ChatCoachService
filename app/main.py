@@ -36,10 +36,17 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Application lifespan handler for startup and shutdown events."""
     from app.core.v1_config import get_v1_config
+    from app.core.container import get_container
     get_v1_config().setup_logging()
     # Startup: Initialize database
     await init_db()
+
+    container = get_container()
+    categorized_cache_service = container.get_session_categorized_cache_service()
+    await categorized_cache_service.start()
     yield
+
+    await categorized_cache_service.stop()
     # Shutdown: Close database connections
     await close_db()
 
