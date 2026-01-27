@@ -1,0 +1,18 @@
+Analyze the conversation and extract the user's communication preferences.
+
+Conversation:
+{conversation}
+
+Output JSON only:
+{{
+  "features": {{
+    "formality": <0.0-1.0>,
+    "detail_level": <0.0-1.0>,
+    "emotional_expression": <0.0-1.0>,
+    "humor_preference": <0.0-1.0>,
+    "directness": <0.0-1.0>,
+    "example_need": <0.0-1.0>,
+    "depth_preference": <0.0-1.0>
+  }},
+  "description": "<one-sentence summary of the user's style>"
+}}

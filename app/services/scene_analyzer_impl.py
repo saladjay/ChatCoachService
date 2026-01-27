@@ -7,8 +7,8 @@ from app.services.base import (
     BaseSceneAnalyzer,
 )
 from app.services.llm_adapter import BaseLLMAdapter, LLMCall
-from app.services.prompt import SCENARIO_PROMPT
-from app.services.prompt_compact import SCENARIO_PROMPT_COMPACT, SCENARIO_PROMPT_COMPACT_V2
+from app.services.prompt_manager import get_prompt_manager, PromptType, PromptVersion
+
 from app.services.schema_expander import SchemaExpander, parse_and_expand_scene_analysis
 from app.models.schemas_compact import SceneAnalysisCompact
 import json
@@ -45,6 +45,7 @@ class SceneAnalyzer(BaseSceneAnalyzer):
         self.model = model
         self.use_compact_prompt = use_compact_prompt
         self.use_compact_v2 = use_compact_v2
+        self._prompt_manager = get_prompt_manager()
 
     async def analyze_scene(self, input: SceneAnalysisInput) -> SceneAnalysisResult:
         """Analyze conversation scene using LLM.
@@ -62,14 +63,26 @@ class SceneAnalyzer(BaseSceneAnalyzer):
         if self.use_compact_prompt and self.use_compact_v2:
             # 使用紧凑 V2 版本（最优化，使用紧凑输出代码）
             # Phase 2: 进一步简化 prompt
-            prompt = self._build_ultra_compact_prompt(conversation_summary, input)
+            prompt_template = self._prompt_manager.get_prompt_version(
+                PromptType.SCENARIO_ANALYSIS,
+                PromptVersion.V3_1_COMPACT_V2,
+            )
+            prompt_template = (prompt_template or "").strip()
+            prompt = prompt_template.format(conversation_summary=conversation_summary)
         elif self.use_compact_prompt:
             # 使用紧凑 V1 版本（减少 token）
-            prompt = SCENARIO_PROMPT_COMPACT.format(conversation_summary=conversation_summary)
+            prompt_template = self._prompt_manager.get_prompt_version(
+                PromptType.SCENARIO_ANALYSIS,
+                PromptVersion.V2_COMPACT,
+            )
+            prompt_template = (prompt_template or "").strip()
+            prompt = prompt_template.format(conversation_summary=conversation_summary)
         else:
             # 使用完整版 prompt（用于调试）
             conversation_text = self._format_conversation(input)
-            prompt = SCENARIO_PROMPT.format(conversation=conversation_text)
+            prompt_template = self._prompt_manager.get_active_prompt(PromptType.SCENARIO_ANALYSIS)
+            prompt_template = (prompt_template or "").strip()
+            prompt = prompt_template.format(conversation=conversation_text)
         
         llm_call = LLMCall(
             task_type="scene",
