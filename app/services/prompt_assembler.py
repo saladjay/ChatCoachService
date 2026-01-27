@@ -3,10 +3,8 @@ from __future__ import annotations
 from typing import Any
 
 from app.models.schemas import ReplyGenerationInput
-from app.services.prompt import CHATCOACH_PROMPT
-from app.services.prompt_compact import (
-    CHATCOACH_PROMPT_COMPACT,
-    CHATCOACH_PROMPT_COMPACT_V2,
+from app.services.prompt_manager import get_prompt_manager, PromptType, PromptVersion
+from app.services.prompt_utils import (
     format_user_style_compact,
     format_conversation_compact,
     get_last_message
@@ -45,6 +43,7 @@ class PromptAssembler:
         self.use_compact_prompt = use_compact_prompt
         self.use_compact_v2 = use_compact_v2
         self.include_reasoning = include_reasoning  # Phase 3
+        self._prompt_manager = get_prompt_manager()
 
     def _display_speaker(self, speaker: Any) -> str:
         s = str(speaker or "").strip()
@@ -106,13 +105,23 @@ class PromptAssembler:
             last_message = get_last_message(context.conversation)
             
             if self.use_compact_v2:
+                prompt_version = (
+                    PromptVersion.V3_1_COMPACT_V2_WITH_REASONING
+                    if self.include_reasoning
+                    else PromptVersion.V3_2_COMPACT_V2_WITHOUT_REASONING
+                )
+                prompt_template = self._prompt_manager.get_prompt_version(
+                    PromptType.REPLY_GENERATION,
+                    prompt_version,
+                )
+                prompt_template = (prompt_template or "").strip()
                 # Phase 3: Build output schema instruction based on reasoning control
                 output_instruction = self._build_output_schema_instruction(
                     include_reasoning=self.include_reasoning
                 )
                 
                 # 精简 V2：使用紧凑输出格式（最优化）
-                base_prompt = CHATCOACH_PROMPT_COMPACT_V2.format(
+                base_prompt = prompt_template.format(
                     recommended_scenario=recommended_scenario,
                     recommended_strategies=recommended_strategies,
                     intimacy_level=intimacy_level,
@@ -129,8 +138,13 @@ class PromptAssembler:
                 version_suffix = "with_reasoning" if self.include_reasoning else "no_reasoning"
                 return f"[PROMPT:reply_generation_compact_v2_{version_suffix}]\n{base_prompt}\n\nLength Constraint: {length_guidance}\n\n{output_instruction}"
             else:
+                prompt_template = self._prompt_manager.get_prompt_version(
+                    PromptType.REPLY_GENERATION,
+                    PromptVersion.V2_COMPACT,
+                )
+                prompt_template = (prompt_template or "").strip()
                 # 精简 V1：减少 40-50% tokens
-                base_prompt = CHATCOACH_PROMPT_COMPACT.format(
+                base_prompt = prompt_template.format(
                     recommended_scenario=recommended_scenario,
                     recommended_strategies=recommended_strategies,
                     intimacy_level=f"{intimacy_level_label}({intimacy_level})",
@@ -178,7 +192,9 @@ class PromptAssembler:
             if not isinstance(reply_sentence, str) or not reply_sentence.strip():
                 reply_sentence = self._infer_reply_sentence(context.conversation)
 
-            base_prompt = CHATCOACH_PROMPT.format(
+            prompt_template = self._prompt_manager.get_active_prompt(PromptType.REPLY_GENERATION)
+            prompt_template = (prompt_template or "").strip()
+            base_prompt = prompt_template.format(
                 scenario=scenario,
                 current_intimacy_level=f"{current_intimacy_level_label}({current_intimacy_level})",
                 intimacy_level=f"{intimacy_level_label}({intimacy_level})",

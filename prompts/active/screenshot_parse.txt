@@ -6,7 +6,8 @@ Output strict JSON with:
   "bubbles": [
     {
       "bbox": [x1, y1, x2, y2],
-      "sender": "U" | "T"
+      "sender": "U" | "T",
+      "text": "..."
     }
   ]
 }
@@ -15,5 +16,5 @@ Rules:
 - All coordinates in original image pixels
 - One item per chat bubble
 - nickname list contains all visible participant names
-- JSON only, no extra text
 - U: user, T: talker
+- text: bubble text content

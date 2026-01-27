@@ -9,6 +9,7 @@ This module provides utilities for:
 
 import re
 from typing import Tuple
+from enum import Enum
 
 
 # Regex pattern to match prompt version identifier at the start of a prompt
@@ -96,3 +97,156 @@ def validate_version_id(version_id: str) -> bool:
     # Allow alphanumeric, underscores, colons, and hyphens
     pattern = re.compile(r'^[a-zA-Z0-9_:.-]+$')
     return bool(pattern.match(version_id))
+
+
+class ChatEmotionState(Enum):
+    # 积极正向
+    HAPPY_JOYFUL = "happy_joyful"  # 开心愉悦
+    EXCITED_ANTICIPATING = "excited_anticipating"  # 兴奋期待
+    RELAXED_COMFORTABLE = "relaxed_comfortable"  # 放松舒适
+    FLIRTATIOUS_PLAYFUL = "flirtatious_playful"  # 暧昧调情
+    
+    # 中性平稳
+    POLITE_FORMAL = "polite_formal"  # 礼貌客气
+    CALM_NEUTRAL = "calm_neutral"  # 平静中立
+    CURIOUS_EXPLORING = "curious_exploring"  # 好奇探索
+    
+    # 消极负面
+    COLD_DISTANT = "cold_distant"  # 冷淡疏离
+    ANXIOUS_NERVOUS = "anxious_nervous"  # 焦虑不安
+    DISAPPOINTED_SAD = "disappointed_sad"  # 失望沮丧
+    ANGRY_UPSET = "angry_upset"  # 生气不满
+    DEFENSIVE_GUARDED = "defensive_guarded"  # 防御戒备
+
+STANDARD_TRAITS = [
+    "depth_preference",
+    "abstraction_level",
+    "learning_speed",
+    "reflection_tendency",
+    "logic_vs_intuition",
+    "structure_need",
+    "example_need",
+    "brevity_preference",
+    "directness_level",
+    "emotional_expression",
+    "initiative_level",
+    "feedback_sensitivity",
+    "control_preference",
+    "engagement_stability",
+    "intimacy_comfort",
+    "risk_tolerance",
+    "decision_speed",
+    "certainty_need",
+    "exploration_tendency",
+    "consistency_preference",
+    "openness",
+    "agreeableness",
+    "dominance",
+    "patience",
+    "self_disclosure",
+]
+
+
+# ============================================================================
+# HELPER FUNCTIONS
+# ============================================================================
+
+def format_user_style_compact(profile_dict: dict) -> str:
+    """
+    Format user profile in compact form.
+    
+    Reduces from ~800 chars to ~200 chars (75% reduction)
+    
+    Args:
+        profile_dict: User profile dictionary
+    
+    Returns:
+        Compact string representation
+    """
+    parts = []
+    
+    # Explicit tags (compact)
+    if 'explicit' in profile_dict:
+        explicit = profile_dict['explicit']
+        if explicit.get('role'):
+            parts.append(f"Role: {', '.join(explicit['role'][:2])}")
+        if explicit.get('response_style'):
+            parts.append(f"Style: {', '.join(explicit['response_style'][:2])}")
+        if explicit.get('forbidden'):
+            parts.append(f"Avoid: {', '.join(explicit['forbidden'][:2])}")
+        if 'intimacy' in explicit:
+            parts.append(f"Intimacy: {explicit['intimacy']}/100")
+    
+    # Top traits only (compact)
+    if 'behavioral' in profile_dict:
+        behavioral = profile_dict['behavioral']
+        top_traits = []
+        for trait_name, trait_data in list(behavioral.items())[:3]:  # Top 3 only
+            if isinstance(trait_data, dict) and 'value' in trait_data:
+                value = trait_data['value']
+                top_traits.append(f"{trait_name}({value:.2f})")
+        if top_traits:
+            parts.append(f"Traits: {', '.join(top_traits)}")
+    
+    # Policy (compact)
+    if 'policy_block' in profile_dict:
+        policy = profile_dict['policy_block']
+        # Extract first line only
+        first_line = policy.split('\n')[0] if policy else ""
+        if first_line:
+            parts.append(f"Policy: {first_line[:999]}")
+    
+    return "\n".join(parts)
+
+
+def format_conversation_compact(messages: list, max_messages: int = 5) -> str:
+    """
+    Format conversation in compact form.
+    
+    Reduces from ~1,500 chars to ~500 chars (67% reduction)
+    
+    Args:
+        messages: List of message objects
+        max_messages: Maximum number of recent messages to include
+    
+    Returns:
+        Compact conversation string
+    """
+    if not messages:
+        return "No history"
+    
+    # Take only recent messages
+    recent = messages[-max_messages:] if len(messages) > max_messages else messages
+    
+    lines = []
+    for msg in recent:
+        speaker = msg.speaker if hasattr(msg, 'speaker') else msg.get('speaker', 'U')
+        content = msg.content if hasattr(msg, 'content') else msg.get('content', '')
+        
+        # Abbreviate speaker
+        speaker_abbr = 'U' if speaker == 'user' or speaker == 'me' else 'T'
+        
+        # Truncate long messages
+        content_short = content[:999] + '...' if len(content) > 999 else content
+        
+        lines.append(f"{speaker_abbr}: {content_short}")
+    
+    return "\n".join(lines)
+
+
+def get_last_message(messages: list) -> str:
+    """
+    Get the last message from conversation.
+    
+    Args:
+        messages: List of message objects
+    
+    Returns:
+        Last message content
+    """
+    if not messages:
+        return ""
+    
+    last = messages[-1]
+    content = last.content if hasattr(last, 'content') else last.get('content', '')
+    return content[:999]  # Limit to 999 chars
