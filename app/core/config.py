@@ -126,6 +126,17 @@ class ModerationClientConfig(BaseSettings):
     allow_http_fallback: bool = True
 
 
+class CacheConfig(BaseSettings):
+    model_config = SettingsConfigDict(env_prefix="CACHE_")
+
+    redis_url: str = "redis://localhost:6379/0"
+    sqlite_path: str = "./session_cache.db"
+    ttl_seconds: int = 7200
+    timeline_max_items: int = 500
+    cleanup_interval_seconds: int = 300
+    redis_key_prefix: str = "cache"
+
+
 class AppConfig(BaseSettings):
     """Main application configuration."""
     
@@ -160,6 +171,7 @@ class AppConfig(BaseSettings):
     trace: TraceConfig = TraceConfig()
     prompt: PromptConfig = PromptConfig.from_env()
     moderation: ModerationClientConfig = ModerationClientConfig()
+    cache: CacheConfig = CacheConfig()
 
 
 # Global configuration instance
