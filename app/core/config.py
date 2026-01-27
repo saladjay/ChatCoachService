@@ -68,6 +68,7 @@ class PromptConfig(BaseSettings):
     include_reasoning: bool = False
     max_reply_tokens: int = 100
     use_compact_schemas: bool = True
+    context_max_messages: int = 20
     
     @classmethod
     def from_env(cls) -> "PromptConfig":
@@ -75,6 +76,7 @@ class PromptConfig(BaseSettings):
         include_reasoning = False
         max_reply_tokens = 100
         use_compact_schemas = True
+        context_max_messages = 20
         
         # Parse include_reasoning
         reasoning_str = os.getenv("PROMPT_INCLUDE_REASONING", "false").lower()
@@ -96,11 +98,22 @@ class PromptConfig(BaseSettings):
         compact_str = os.getenv("PROMPT_USE_COMPACT_SCHEMAS", "true").lower()
         if compact_str in ("false", "0", "no"):
             use_compact_schemas = False
+
+        # Parse context_max_messages with validation
+        try:
+            max_messages = int(os.getenv("PROMPT_CONTEXT_MAX_MESSAGES", "20"))
+            if 1 <= max_messages <= 50:
+                context_max_messages = max_messages
+            else:
+                context_max_messages = max(1, min(50, max_messages))
+        except (ValueError, TypeError):
+            pass
         
         return cls(
             include_reasoning=include_reasoning,
             max_reply_tokens=max_reply_tokens,
-            use_compact_schemas=use_compact_schemas
+            use_compact_schemas=use_compact_schemas,
+            context_max_messages=context_max_messages,
         )
 class ModerationClientConfig(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="MODERATION_")

@@ -19,10 +19,6 @@ class ScreenshotConfig(BaseSettings):
         extra="ignore",
     )
     
-    supported_apps: list[str] = Field(
-        default=["whatsapp", "telegram", "discord", "wechat", "line"],
-        description="List of supported chat applications"
-    )
     supported_languages: list[str] = Field(
         default=["en", "zh", "es", "fr", "de", "ja", "ko"],
         description="List of supported languages"
@@ -158,13 +154,15 @@ class V1Config(BaseSettings):
         
         # Configure submodule loggers
         submodule_level = self.logging.get_submodule_level()
-        for module_name in ["screenshotanalysis", "paddleocr", "paddle"]:
+        screenshotanalysis_logger = logging.getLogger("screenshotanalysis")
+        screenshotanalysis_logger.setLevel(self.logging.get_level())
+
+        for module_name in ["paddleocr", "paddle"]:
             logger = logging.getLogger(module_name)
             logger.setLevel(submodule_level)
             
             # Prevent propagation to avoid duplicate logs
-            if module_name in ["paddleocr", "paddle"]:
-                logger.propagate = False
+            logger.propagate = False
         
         # Log configuration
         main_logger = logging.getLogger(__name__)

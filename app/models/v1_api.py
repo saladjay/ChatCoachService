@@ -251,7 +251,7 @@ class PredictResponse(BaseModel):
         default=None,
         description="生成的回复建议（仅当 reply=True 时存在）"
     )
-
+    
 
 class HealthResponse(BaseModel):
     """

@@ -209,5 +209,19 @@ def setup_structured_logging(
     # Add handler to root logger
     root_logger.addHandler(console_handler)
     root_logger.setLevel(level)
+
+    for logger_name in [
+        "uvicorn",
+        "uvicorn.error",
+        "uvicorn.access",
+        "fastapi",
+        "starlette",
+        "app",
+    ]:
+        sub_logger = logging.getLogger(logger_name)
+        for handler in sub_logger.handlers[:]:
+            sub_logger.removeHandler(handler)
+        sub_logger.propagate = True
+        sub_logger.setLevel(level)
     
     logger.info(f"Structured logging configured: level={logging.getLevelName(level)}, json={use_json}")

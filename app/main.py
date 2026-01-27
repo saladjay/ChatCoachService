@@ -35,6 +35,8 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Application lifespan handler for startup and shutdown events."""
+    from app.core.v1_config import get_v1_config
+    get_v1_config().setup_logging()
     # Startup: Initialize database
     await init_db()
     yield
@@ -59,11 +61,19 @@ def create_app() -> FastAPI:
         openapi_url="/openapi.json",
     )
     
+    allow_credentials = settings.cors_allow_credentials
+    if "*" in settings.cors_origins and allow_credentials:
+        allow_credentials = False
+        logger.warning(
+            "CORS allow_credentials=True is not compatible with allow_origins=['*']; "
+            "forcing allow_credentials=False. Configure explicit origins to use credentials."
+        )
+
     # Configure CORS
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins,
-        allow_credentials=settings.cors_allow_credentials,
+        allow_credentials=allow_credentials,
         allow_methods=settings.cors_allow_methods,
         allow_headers=settings.cors_allow_headers,
     )

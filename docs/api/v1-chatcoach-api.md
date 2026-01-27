@@ -340,12 +340,6 @@ The API behavior can be configured through `config.yaml`:
 
 ```yaml
 v1_api:
-  supported_apps:
-    - whatsapp
-    - telegram
-    - discord
-    - wechat
-  
   supported_languages:
     - en
     - zh
@@ -367,7 +361,6 @@ v1_api:
 
 | Parameter | Description | Default |
 |-----------|-------------|---------|
-| `supported_apps` | List of supported chat applications | `["whatsapp", "telegram"]` |
 | `supported_languages` | List of supported languages | `["en", "zh"]` |
 | `default_conf_threshold` | Default detection confidence threshold | `0.5` |
 | `model_load_timeout` | Model loading timeout in seconds | `30.0` |
