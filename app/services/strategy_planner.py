@@ -74,8 +74,8 @@ class StrategyPlanner:
     def __init__(
         self,
         llm_adapter: BaseLLMAdapter,
-        provider: str = "dashscope",
-        model: str = "qwen-flash",
+        provider: str | None = None,
+        model: str | None = None,
         use_compact: bool = True
     ):
         """Initialize StrategyPlanner.

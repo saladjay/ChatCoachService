@@ -1,0 +1,17 @@
+{
+  "prompt_id": "reply_generation_v3.2-compact_v2_no_reasoning",
+  "prompt_type": "reply_generation",
+  "version": "v3.2-compact_v2_no_reasoning",
+  "created_at": "2026-01-22T15:43:12.277886",
+  "author": "system",
+  "description": "Reply generation - compact V2 without reasoning (most optimized)",
+  "tags": [
+    "compact",
+    "optimized",
+    "token-reduced"
+  ],
+  "token_estimate": 133,
+  "performance_notes": "Version ID: reply_generation_compact_v2_no_reasoning",
+  "is_active": false,
+  "parent_version": null
+}

@@ -1,0 +1,28 @@
+Professional dating coach. Generate 3 reply suggestions.
+
+## Context
+Scenario: {recommended_scenario}
+Strategies: {recommended_strategies}
+Intimacy: User({intimacy_level}) vs Current({current_intimacy_level})
+Emotion: {emotion_state}
+
+## Summary
+{conversation_summary}
+
+## User Style
+{user_style_compact}
+
+## Last Message
+{last_message}
+
+## Language
+{language}
+
+Output JSON:
+{{
+  "replies": [
+    {{"text": "...", "strategy": "...", "reasoning": "..."}},
+    {{"text": "...", "strategy": "...", "reasoning": "..."}},
+    {{"text": "...", "strategy": "...", "reasoning": "..."}}
+  ]
+}}

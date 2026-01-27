@@ -11,3 +11,5 @@ logs_*/
 .venv
 
 .hypothesis/
+
+old-api/

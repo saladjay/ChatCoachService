@@ -1,0 +1,34 @@
+# ChatCoach API Configuration
+
+# API v1 Configuration
+v1:
+  # Screenshot processing configuration
+  screenshot:
+    supported_apps:
+      - whatsapp
+      - telegram
+      - discord
+      - wechat
+      - line
+      - instagram
+    
+    supported_languages:
+      - en
+      - zh
+      - es
+      - ar
+      - pt
+      - fr
+      - de
+      - ja
+      - ko
+    
+    default_conf_threshold: 0.5
+    model_load_timeout: 30.0
+    history_update_interval: 10
+  
+  # Logging configuration
+  logging:
+    level: "INFO"  # DEBUG, INFO, WARNING, ERROR, CRITICAL
+    format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    submodule_level: "WARNING"  # Logging level for screenshotanalysis and paddleocr

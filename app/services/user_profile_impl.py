@@ -1032,8 +1032,8 @@ class UserProfileService(BaseUserProfileService):
         self,
         user_id: str,
         messages: list[Message],
-        provider='dashscope',
-        model='qwen-flash',
+        provider: str | None = None,
+        model: str | None = None,
     ) -> list[LearnedPreference]:
         """从对话上下文学习用户偏好。
         

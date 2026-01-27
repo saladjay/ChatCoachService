@@ -37,6 +37,7 @@ TASK_SCENE_MAP = {
     "persona": "persona",
     "generation": "chat",
     "qc": "coach",
+    "strategy_planning": "system",
 }
 
 # 支持的平台列表
@@ -48,7 +49,7 @@ class LLMCall:
     
     def __init__(
         self,
-        task_type: Literal["scene", "persona", "generation", "qc"],
+        task_type: Literal["scene", "persona", "generation", "qc", "strategy_planning"],
         prompt: str,
         quality: Literal["cheap", "normal", "premium"] = "normal",
         user_id: str = "system",
