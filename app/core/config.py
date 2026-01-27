@@ -150,6 +150,7 @@ class AppConfig(BaseSettings):
     app_name: str = "Conversation Generation Service"
     app_version: str = "0.1.0"
     debug: bool = False
+    no_reply_cache: bool = True
     
     # API settings
     api_prefix: str = "/api/v1"

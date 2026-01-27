@@ -49,7 +49,7 @@ class LLMCall:
     
     def __init__(
         self,
-        task_type: Literal["context_builder", "scene", "persona", "generation", "qc", "strategy_planning"],
+        task_type: Literal["screenshot_parse","context_builder", "scene", "persona", "generation", "qc", "strategy_planning"],
         prompt: str,
         quality: Literal["cheap", "normal", "premium"] = "normal",
         user_id: str = "system",

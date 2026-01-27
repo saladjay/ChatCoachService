@@ -18,6 +18,7 @@ from datetime import datetime
 from typing import Literal
 
 from app.core.config import OrchestratorConfig as OrchestratorConfigSettings
+from app.core.config import settings
 from app.core.config import BillingConfig
 from app.core.exceptions import (
     ContextBuildError,
@@ -291,14 +292,22 @@ class Orchestrator:
                     await self._append_cache_event(request, "strategy_plan", asdict(strategy_plan))
             
             # Step 4 & 5: Generate reply with intimacy check (with retries)
-            cached_reply = await self._get_cached_payload(request, "reply")
+            cached_reply = None
+            if not settings.no_reply_cache:
+                cached_reply = await self._get_cached_payload(request, "reply")
+
             if cached_reply:
                 reply_result = LLMResult(**cached_reply)
             else:
                 reply_result, intimacy_result = await self._generate_with_retry(
                     exec_ctx, request, context, scene, persona, strategy_plan
                 )
-                await self._append_cache_event(request, "reply", reply_result.model_dump(mode="json"))
+                if not settings.no_reply_cache:
+                    await self._append_cache_event(
+                        request,
+                        "reply",
+                        reply_result.model_dump(mode="json"),
+                    )
             
             # Record all billing records
             for record in exec_ctx.billing_records:

@@ -49,6 +49,13 @@
         "version": "v1.0-original",
         "created_at": "2026-01-21T15:17:25.757117"
       }
+    ],
+    "screenshot_parse": [
+      {
+        "prompt_id": "screenshot_parse_v2.0-compact",
+        "version": "v2.0-compact",
+        "created_at": "2026-01-27T22:07:14.253330"
+      }
     ]
   },
   "active_versions": {
@@ -56,7 +63,8 @@
     "context_summary": "context_summary_v2.0-compact",
     "reply_generation": "reply_generation_v2.0-compact",
     "trait_discovery": "trait_discovery_v1.0-original",
-    "trait_mapping": "trait_mapping_v1.0-original"
+    "trait_mapping": "trait_mapping_v1.0-original",
+    "screenshot_parse": "screenshot_parse_v2.0-compact"
   },
   "version_history": [
     {
@@ -136,6 +144,24 @@
       "action": "activate",
       "timestamp": "2026-01-21T15:17:25.843927",
       "author": "system"
+    },
+    {
+      "prompt_id": "screenshot_parse_v2.0-compact",
+      "action": "register",
+      "timestamp": "2026-01-27T22:07:14.253741",
+      "author": "dengyongjie"
+    },
+    {
+      "prompt_id": "screenshot_parse_v2.0-compact",
+      "action": "activate",
+      "timestamp": "2026-01-27T22:07:14.285267",
+      "author": "dengyongjie"
+    },
+    {
+      "prompt_id": "screenshot_parse_v2.0-compact",
+      "action": "activate",
+      "timestamp": "2026-01-27T22:09:05.663023",
+      "author": "cli_user"
     }
   ]
 }
