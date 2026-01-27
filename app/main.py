@@ -43,10 +43,23 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     container = get_container()
     categorized_cache_service = container.get_session_categorized_cache_service()
-    await categorized_cache_service.start()
+    try:
+        await categorized_cache_service.start()
+    except Exception as e:
+        logger.warning(
+            f"SessionCategorizedCacheService start failed (continuing without Redis cache): {e}",
+            exc_info=True,
+        )
+        try:
+            await categorized_cache_service.stop()
+        except Exception:
+            logger.warning("SessionCategorizedCacheService cleanup failed", exc_info=True)
     yield
 
-    await categorized_cache_service.stop()
+    try:
+        await categorized_cache_service.stop()
+    except Exception as e:
+        logger.warning(f"SessionCategorizedCacheService stop failed: {e}", exc_info=True)
     # Shutdown: Close database connections
     await close_db()
 

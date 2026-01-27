@@ -200,6 +200,49 @@ def show_active(args):
                 print()
 
 
+def register_from_file(args):
+    """Register a prompt version from a file (optionally activate it)."""
+    manager = PromptManager()
+
+    try:
+        prompt_type = PromptType(args.prompt_type)
+        version = PromptVersion(args.version)
+    except ValueError as e:
+        print(f"Error: Invalid prompt type or version - {e}")
+        return
+
+    prompt_path = Path(args.file)
+    if not prompt_path.is_absolute():
+        prompt_path = project_root / prompt_path
+
+    if not prompt_path.exists():
+        print(f"Error: Prompt file not found: {prompt_path}")
+        return
+
+    content = prompt_path.read_text(encoding="utf-8")
+
+    prompt_id = manager.register_prompt(
+        prompt_type=prompt_type,
+        version=version,
+        content=content,
+        author=args.author,
+        description=args.description,
+        tags=[t.strip() for t in (args.tags or "").split(",") if t.strip()],
+        token_estimate=int(args.token_estimate or 0),
+        performance_notes=args.performance_notes or "",
+        parent_version=args.parent_version,
+    )
+
+    print(f"✓ Registered {prompt_type.value} version {version.value} (prompt_id={prompt_id})")
+
+    if args.activate:
+        success = manager.activate_version(prompt_type, version, author=args.author)
+        if success:
+            print(f"✓ Activated {prompt_type.value} version {version.value}")
+        else:
+            print(f"✗ Failed to activate {prompt_type.value} version {version.value}")
+
+
 def main():
     """Main CLI entry point"""
     parser = argparse.ArgumentParser(
@@ -224,6 +267,9 @@ Examples:
   
   Show active versions:
     python scripts/manage_prompts.py active
+
+  Register from file (and optionally activate):
+    python scripts/manage_prompts.py register screenshot_parse v2.0-compact prompts/versions/screenshot_parse_v2.0-compact.txt --activate
         """
     )
     
@@ -258,6 +304,19 @@ Examples:
     
     # Active command
     subparsers.add_parser("active", help="Show active prompt versions")
+
+    # Register command
+    register_parser = subparsers.add_parser("register", help="Register a prompt version from a file")
+    register_parser.add_argument("prompt_type", help="Prompt type")
+    register_parser.add_argument("version", help="Version identifier")
+    register_parser.add_argument("file", help="Path to prompt content file")
+    register_parser.add_argument("--author", default="cli_user", help="Author name")
+    register_parser.add_argument("--description", default="", help="Version description")
+    register_parser.add_argument("--tags", default="", help="Comma-separated tags")
+    register_parser.add_argument("--token-estimate", default="0", help="Estimated token count")
+    register_parser.add_argument("--performance-notes", default="", help="Performance notes")
+    register_parser.add_argument("--parent-version", default=None, help="Parent version prompt_id")
+    register_parser.add_argument("--activate", action="store_true", help="Activate after registering")
     
     args = parser.parse_args()
     
@@ -272,7 +331,8 @@ Examples:
         "compare": compare_versions,
         "export": export_version,
         "rollback": rollback_version,
-        "active": show_active
+        "active": show_active,
+        "register": register_from_file,
     }
     
     command_func = commands.get(args.command)

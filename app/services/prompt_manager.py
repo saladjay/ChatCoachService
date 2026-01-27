@@ -31,6 +31,7 @@ class PromptType(Enum):
     REPLY_GENERATION = "reply_generation"
     TRAIT_DISCOVERY = "trait_discovery"
     TRAIT_MAPPING = "trait_mapping"
+    SCREENSHOT_PARSE = "screenshot_parse"
 
 
 @dataclass
