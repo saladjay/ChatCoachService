@@ -10,6 +10,22 @@
         "prompt_id": "scenario_analysis_v2.0-compact",
         "version": "v2.0-compact",
         "created_at": "2026-01-21T15:17:25.758163"
+      },
+      {
+        "prompt_id": "scenario_analysis_v1.0-original",
+        "version": "v1.0-original",
+        "created_at": "2026-01-27T23:33:40.468256"
+      },
+      {
+        "prompt_id": "scenario_analysis_v2.0-compact",
+        "version": "v2.0-compact",
+        "created_at": "2026-01-27T23:33:40.480483"
+      },
+      {
+        "prompt_id": "scenario_analysis_v3.1-compact_v2",
+        "version": "v3.1-compact_v2",
+        "version_id": "scene_analyzer_compact_v2",
+        "created_at": "2026-01-27T23:34:18.953922"
       }
     ],
     "context_summary": [
@@ -22,6 +38,22 @@
         "prompt_id": "context_summary_v2.0-compact",
         "version": "v2.0-compact",
         "created_at": "2026-01-21T15:17:25.758930"
+      },
+      {
+        "prompt_id": "context_summary_v1.0-original",
+        "version": "v1.0-original",
+        "created_at": "2026-01-27T23:33:40.469744"
+      },
+      {
+        "prompt_id": "context_summary_v2.0-compact",
+        "version": "v2.0-compact",
+        "created_at": "2026-01-27T23:33:40.481473"
+      },
+      {
+        "prompt_id": "context_summary_v3.1-compact_v2",
+        "version": "v3.1-compact_v2",
+        "version_id": "context_summary_compact_v2",
+        "created_at": "2026-01-27T23:34:18.953053"
       }
     ],
     "reply_generation": [
@@ -34,6 +66,28 @@
         "prompt_id": "reply_generation_v2.0-compact",
         "version": "v2.0-compact",
         "created_at": "2026-01-21T15:17:25.759638"
+      },
+      {
+        "prompt_id": "reply_generation_v1.0-original",
+        "version": "v1.0-original",
+        "created_at": "2026-01-27T23:33:40.476574"
+      },
+      {
+        "prompt_id": "reply_generation_v2.0-compact",
+        "version": "v2.0-compact",
+        "created_at": "2026-01-27T23:33:40.482515"
+      },
+      {
+        "prompt_id": "reply_generation_v3.1-compact_v2_with_reasoning",
+        "version": "v3.1-compact_v2_with_reasoning",
+        "version_id": "reply_generation_compact_v2_with_reasoning",
+        "created_at": "2026-01-27T23:34:18.955594"
+      },
+      {
+        "prompt_id": "reply_generation_v3.2-compact_v2_no_reasoning",
+        "version": "v3.2-compact_v2_no_reasoning",
+        "version_id": "reply_generation_compact_v2_no_reasoning",
+        "created_at": "2026-01-27T23:34:18.956382"
       }
     ],
     "trait_discovery": [
@@ -41,6 +95,11 @@
         "prompt_id": "trait_discovery_v1.0-original",
         "version": "v1.0-original",
         "created_at": "2026-01-21T15:17:25.756513"
+      },
+      {
+        "prompt_id": "trait_discovery_v1.0-original",
+        "version": "v1.0-original",
+        "created_at": "2026-01-27T23:33:40.478020"
       }
     ],
     "trait_mapping": [
@@ -48,6 +107,11 @@
         "prompt_id": "trait_mapping_v1.0-original",
         "version": "v1.0-original",
         "created_at": "2026-01-21T15:17:25.757117"
+      },
+      {
+        "prompt_id": "trait_mapping_v1.0-original",
+        "version": "v1.0-original",
+        "created_at": "2026-01-27T23:33:40.479255"
       }
     ],
     "screenshot_parse": [
@@ -65,7 +129,7 @@
   },
   "active_versions": {
     "scenario_analysis": "scenario_analysis_v2.0-compact",
-    "context_summary": "context_summary_v2.0-compact",
+    "context_summary": "context_summary_v3.0-compact",
     "reply_generation": "reply_generation_v2.0-compact",
     "trait_discovery": "trait_discovery_v1.0-original",
     "trait_mapping": "trait_mapping_v1.0-original",
@@ -178,6 +242,90 @@
       "prompt_id": "screenshot_parse_v2.0-compact",
       "action": "activate",
       "timestamp": "2026-01-27T23:14:03.027077",
+      "author": "cli_user"
+    },
+    {
+      "prompt_id": "scenario_analysis_v1.0-original",
+      "action": "register",
+      "timestamp": "2026-01-27T23:33:40.469024",
+      "author": "initial_dev"
+    },
+    {
+      "prompt_id": "context_summary_v1.0-original",
+      "action": "register",
+      "timestamp": "2026-01-27T23:33:40.470190",
+      "author": "initial_dev"
+    },
+    {
+      "prompt_id": "reply_generation_v1.0-original",
+      "action": "register",
+      "timestamp": "2026-01-27T23:33:40.477150",
+      "author": "initial_dev"
+    },
+    {
+      "prompt_id": "trait_discovery_v1.0-original",
+      "action": "register",
+      "timestamp": "2026-01-27T23:33:40.478562",
+      "author": "initial_dev"
+    },
+    {
+      "prompt_id": "trait_mapping_v1.0-original",
+      "action": "register",
+      "timestamp": "2026-01-27T23:33:40.479611",
+      "author": "initial_dev"
+    },
+    {
+      "prompt_id": "scenario_analysis_v2.0-compact",
+      "action": "register",
+      "timestamp": "2026-01-27T23:33:40.480878",
+      "author": "optimization_team"
+    },
+    {
+      "prompt_id": "context_summary_v2.0-compact",
+      "action": "register",
+      "timestamp": "2026-01-27T23:33:40.481792",
+      "author": "optimization_team"
+    },
+    {
+      "prompt_id": "reply_generation_v2.0-compact",
+      "action": "register",
+      "timestamp": "2026-01-27T23:33:40.482962",
+      "author": "optimization_team"
+    },
+    {
+      "prompt_id": "scenario_analysis_v2.0-compact",
+      "action": "activate",
+      "timestamp": "2026-01-27T23:33:40.505860",
+      "author": "system"
+    },
+    {
+      "prompt_id": "context_summary_v2.0-compact",
+      "action": "activate",
+      "timestamp": "2026-01-27T23:33:40.526922",
+      "author": "system"
+    },
+    {
+      "prompt_id": "reply_generation_v2.0-compact",
+      "action": "activate",
+      "timestamp": "2026-01-27T23:33:40.547837",
+      "author": "system"
+    },
+    {
+      "prompt_id": "trait_discovery_v1.0-original",
+      "action": "activate",
+      "timestamp": "2026-01-27T23:33:40.569207",
+      "author": "system"
+    },
+    {
+      "prompt_id": "trait_mapping_v1.0-original",
+      "action": "activate",
+      "timestamp": "2026-01-27T23:33:40.588941",
+      "author": "system"
+    },
+    {
+      "prompt_id": "context_summary_v3.0-compact",
+      "action": "activate",
+      "timestamp": "2026-01-27T23:38:06.738781",
       "author": "cli_user"
     }
   ]

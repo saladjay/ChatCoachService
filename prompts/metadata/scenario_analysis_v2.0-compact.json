@@ -2,7 +2,7 @@
   "prompt_id": "scenario_analysis_v2.0-compact",
   "prompt_type": "scenario_analysis",
   "version": "v2.0-compact",
-  "created_at": "2026-01-21T15:17:25.758163",
+  "created_at": "2026-01-27T23:33:40.480483",
   "author": "optimization_team",
   "description": "Compact scenario analysis prompt with strategy codes only",
   "tags": [

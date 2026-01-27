@@ -12,6 +12,6 @@
   ],
   "token_estimate": 118,
   "performance_notes": "Version ID: context_summary_compact_v1",
-  "is_active": false,
+  "is_active": true,
   "parent_version": null
 }

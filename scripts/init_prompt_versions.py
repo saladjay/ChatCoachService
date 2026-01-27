@@ -15,20 +15,16 @@ sys.path.insert(0, str(project_root))
 from app.services.prompt_manager import (
     PromptManager,
     PromptType,
-    PromptVersion
+    PromptVersion,
 )
-from app.services.prompt_en import (
-    SCENARIO_PROMPT,
-    CONTEXT_SUMMARY_PROMPT,
-    CHATCOACH_PROMPT,
-    TRAIT_DISCOVERY_PROMPT,
-    TRAIT_MAPPING_PROMPT
-)
-from app.services.prompt_compact import (
-    SCENARIO_PROMPT_COMPACT,
-    CONTEXT_SUMMARY_PROMPT_COMPACT,
-    CHATCOACH_PROMPT_COMPACT
-)
+
+PROMPTS_DIR = project_root / "prompts"
+VERSIONS_DIR = PROMPTS_DIR / "versions"
+
+
+def _read_version(prompt_type: PromptType, version: PromptVersion) -> str:
+    path = VERSIONS_DIR / f"{prompt_type.value}_{version.value}.txt"
+    return path.read_text(encoding="utf-8").strip()
 
 
 def init_prompt_versions():
@@ -52,7 +48,7 @@ def init_prompt_versions():
     manager.register_prompt(
         prompt_type=PromptType.SCENARIO_ANALYSIS,
         version=PromptVersion.V1_ORIGINAL,
-        content=SCENARIO_PROMPT,
+        content=_read_version(PromptType.SCENARIO_ANALYSIS, PromptVersion.V1_ORIGINAL),
         author="initial_dev",
         description="Original scenario analysis prompt with full strategy descriptions",
         tags=["original", "full", "detailed"],
@@ -65,7 +61,7 @@ def init_prompt_versions():
     manager.register_prompt(
         prompt_type=PromptType.CONTEXT_SUMMARY,
         version=PromptVersion.V1_ORIGINAL,
-        content=CONTEXT_SUMMARY_PROMPT,
+        content=_read_version(PromptType.CONTEXT_SUMMARY, PromptVersion.V1_ORIGINAL),
         author="initial_dev",
         description="Original context summary prompt with full conversation history",
         tags=["original", "full"],
@@ -78,7 +74,7 @@ def init_prompt_versions():
     manager.register_prompt(
         prompt_type=PromptType.REPLY_GENERATION,
         version=PromptVersion.V1_ORIGINAL,
-        content=CHATCOACH_PROMPT,
+        content=_read_version(PromptType.REPLY_GENERATION, PromptVersion.V1_ORIGINAL),
         author="initial_dev",
         description="Original reply generation prompt with full user profile",
         tags=["original", "full", "detailed"],
@@ -91,7 +87,7 @@ def init_prompt_versions():
     manager.register_prompt(
         prompt_type=PromptType.TRAIT_DISCOVERY,
         version=PromptVersion.V1_ORIGINAL,
-        content=TRAIT_DISCOVERY_PROMPT,
+        content=_read_version(PromptType.TRAIT_DISCOVERY, PromptVersion.V1_ORIGINAL),
         author="initial_dev",
         description="Original trait discovery prompt",
         tags=["original", "user_profile"],
@@ -104,7 +100,7 @@ def init_prompt_versions():
     manager.register_prompt(
         prompt_type=PromptType.TRAIT_MAPPING,
         version=PromptVersion.V1_ORIGINAL,
-        content=TRAIT_MAPPING_PROMPT,
+        content=_read_version(PromptType.TRAIT_MAPPING, PromptVersion.V1_ORIGINAL),
         author="initial_dev",
         description="Original trait mapping prompt",
         tags=["original", "user_profile"],
@@ -126,7 +122,7 @@ def init_prompt_versions():
     manager.register_prompt(
         prompt_type=PromptType.SCENARIO_ANALYSIS,
         version=PromptVersion.V2_COMPACT,
-        content=SCENARIO_PROMPT_COMPACT,
+        content=_read_version(PromptType.SCENARIO_ANALYSIS, PromptVersion.V2_COMPACT),
         author="optimization_team",
         description="Compact scenario analysis prompt with strategy codes only",
         tags=["compact", "optimized", "token-efficient"],
@@ -140,7 +136,7 @@ def init_prompt_versions():
     manager.register_prompt(
         prompt_type=PromptType.CONTEXT_SUMMARY,
         version=PromptVersion.V2_COMPACT,
-        content=CONTEXT_SUMMARY_PROMPT_COMPACT,
+        content=_read_version(PromptType.CONTEXT_SUMMARY, PromptVersion.V2_COMPACT),
         author="optimization_team",
         description="Compact context summary prompt with abbreviated conversation",
         tags=["compact", "optimized", "token-efficient"],
@@ -154,7 +150,7 @@ def init_prompt_versions():
     manager.register_prompt(
         prompt_type=PromptType.REPLY_GENERATION,
         version=PromptVersion.V2_COMPACT,
-        content=CHATCOACH_PROMPT_COMPACT,
+        content=_read_version(PromptType.REPLY_GENERATION, PromptVersion.V2_COMPACT),
         author="optimization_team",
         description="Compact reply generation prompt with minimal user profile",
         tags=["compact", "optimized", "token-efficient"],
