@@ -41,8 +41,8 @@ class SceneAnalyzer(BaseSceneAnalyzer):
             use_compact_v2: Use compact V2 with compact output codes (default: True)
         """
         self._llm_adapter = llm_adapter
-        self.provider = "dashscope"
-        self.model = "qwen-flash"
+        self.provider = provider
+        self.model = model
         self.use_compact_prompt = use_compact_prompt
         self.use_compact_v2 = use_compact_v2
 

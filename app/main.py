@@ -43,13 +43,20 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
 
 def create_app() -> FastAPI:
-    """Create and configure the FastAPI application."""
+    """Create and configure the FastAPI application.
+    
+    Requirements: 1.4, 1.5, 10.3, 10.4
+    """
     
     app = FastAPI(
         title=settings.app_name,
         version=settings.app_version,
         debug=settings.debug,
         lifespan=lifespan,
+        # Requirement 1.4, 1.5: Configure OpenAPI docs URLs
+        docs_url="/docs",
+        redoc_url="/redoc",
+        openapi_url="/openapi.json",
     )
     
     # Configure CORS
@@ -60,6 +67,16 @@ def create_app() -> FastAPI:
         allow_methods=settings.cors_allow_methods,
         allow_headers=settings.cors_allow_headers,
     )
+    
+    # Add request logging middleware for v1 endpoints
+    # Requirements: 10.3, 10.4
+    from app.core.v1_config import get_v1_config
+    from app.api.v1.middleware import RequestLoggingMiddleware
+    
+    v1_config = get_v1_config()
+    if v1_config.logging.enable_request_logging:
+        app.add_middleware(RequestLoggingMiddleware)
+        logger.info("Request logging middleware enabled")
     
     # Register exception handlers
     register_exception_handlers(app)
@@ -241,20 +258,30 @@ def register_exception_handlers(app: FastAPI) -> None:
 
 
 def register_routes(app: FastAPI) -> None:
-    """Register API routes."""
+    """Register API routes.
     
-    @app.get("/health")
-    async def health_check() -> dict:
-        """Health check endpoint."""
-        return {"status": "healthy", "version": settings.app_version}
+    Requirements: 1.4, 1.5
+    """
     
     # Register API routes
     from app.api.generate import router as generate_router
     from app.api.context import router as context_router
     from app.api.user_profile import router as user_profile_router
+    from app.api.screenshot import router as screenshot_router
+    from app.api.health import router as health_router
+    
+    app.include_router(health_router)
+    
     app.include_router(generate_router, prefix=settings.api_prefix)
     app.include_router(context_router, prefix=settings.api_prefix)
     app.include_router(user_profile_router, prefix=settings.api_prefix)
+    app.include_router(screenshot_router, prefix=settings.api_prefix)
+    app.include_router(health_router, prefix=settings.api_prefix)
+    
+    # Register v1 API router
+    # Requirement 1.1, 1.2, 1.3: Register v1 router with /api/v1/ChatCoach prefix
+    from app.api.v1.router import api_router as v1_router
+    app.include_router(v1_router)
 
 
 # Create the application instance

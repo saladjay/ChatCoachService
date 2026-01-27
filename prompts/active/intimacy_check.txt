@@ -1,0 +1,11 @@
+[PROMPT:intimacy_check_compact_v2]
+Review: Assess if reply exceeds current relationship stage intimacy.
+
+Stages: 1=stranger 2=acquaintance 3=friend 4=intimate 5=bonded
+
+Output JSON: {"score": <0~1>}
+score: 0=appropriate 1=boundary-crossing
+
+persona: {persona}
+stage: {intimacy_stage}
+text: {text}

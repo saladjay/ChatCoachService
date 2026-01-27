@@ -100,8 +100,6 @@ class LLMAdapterReplyGenerator(BaseReplyGenerator):
             prompt=prompt,
             quality=input.quality,
             user_id=input.user_id,
-            provider='dashscope',
-            model='qwen-flash',
             max_tokens=max_tokens,  # Phase 3: Add token limit
         )
         
@@ -161,9 +159,7 @@ class LLMAdapterReplyGenerator(BaseReplyGenerator):
                 provider=result.provider,
                 input_tokens=result.input_tokens,
                 output_tokens=result.output_tokens,
-                total_tokens=result.total_tokens,
-                cost=result.cost,
-                latency=result.latency
+                cost_usd=result.cost_usd,
             )
             
         except (json.JSONDecodeError, ValueError, Exception) as e:
