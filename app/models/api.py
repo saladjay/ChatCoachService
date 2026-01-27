@@ -29,6 +29,9 @@ class GenerateReplyRequest(BaseModel):
     user_id: str = Field(..., min_length=1, description="User identifier")
     target_id: str = Field(..., min_length=1, description="Target user identifier")
     conversation_id: str = Field(..., min_length=1, description="Conversation identifier")
+    resource: Optional[str] = Field(
+        default=None, description="Resource identifier (image_url or text content)"
+    )
     language: str = Field(default="en", description="Language code (en/ar/pt/es/zh-CN)")
     quality: Literal["cheap", "normal", "premium"] = Field(
         default="normal", description="Quality tier for LLM selection"

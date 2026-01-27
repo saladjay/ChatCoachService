@@ -26,6 +26,7 @@ from app.services.orchestrator import Orchestrator
 from app.services.persistence import PersistenceService
 from app.services.user_profile_impl import BaseUserProfileService
 from app.services.screenshot_parser import ScreenshotParserService
+from app.services.session_categorized_cache_service import SessionCategorizedCacheService
 
 
 def get_service_container() -> ServiceContainer:
@@ -200,6 +201,12 @@ def get_screenshot_parser(
     return container.get_screenshot_parser()
 
 
+def get_session_categorized_cache_service(
+    container: Annotated[ServiceContainer, Depends(get_service_container)]
+) -> SessionCategorizedCacheService:
+    return container.get_session_categorized_cache_service()
+
+
 # Type aliases for cleaner route signatures
 ServiceContainerDep = Annotated[ServiceContainer, Depends(get_service_container)]
 OrchestratorDep = Annotated[Orchestrator, Depends(get_orchestrator)]
@@ -211,5 +218,8 @@ UserProfileServiceDep = Annotated[BaseUserProfileService, Depends(get_user_profi
 ReplyGeneratorDep = Annotated[BaseReplyGenerator, Depends(get_reply_generator)]
 IntimacyCheckerDep = Annotated[BaseIntimacyChecker, Depends(get_intimacy_checker)]
 ScreenshotParserDep = Annotated[ScreenshotParserService, Depends(get_screenshot_parser)]
+SessionCategorizedCacheServiceDep = Annotated[
+    SessionCategorizedCacheService, Depends(get_session_categorized_cache_service)
+]
 DbSessionDep = Annotated[AsyncSession, Depends(get_db_session)]
 PersistenceServiceDep = Annotated[PersistenceService, Depends(get_persistence_service)]
