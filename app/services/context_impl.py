@@ -4,9 +4,9 @@ from app.models.schemas import (
     ContextBuilderInput,
     ContextResult)
 from app.services.llm_adapter import BaseLLMAdapter, LLMCall
+from app.services.prompt_manager import get_prompt_manager, PromptType, PromptVersion
+from app.services.prompt_utils import format_conversation_compact
 
-from app.services.prompt import CONTEXT_SUMMARY_PROMPT
-from app.services.prompt_compact import CONTEXT_SUMMARY_PROMPT_COMPACT, format_conversation_compact
 from user_profile.intimacy import is_recovery_stage, normalize_intimacy_level
 
 
@@ -36,6 +36,7 @@ class ContextBuilder(BaseContextBuilder):
         self.model = model
         self.use_compact_prompt = use_compact_prompt
         self.context_max_messages = max(1, int(context_max_messages))
+        self._prompt_manager = get_prompt_manager()
 
     async def build_context(self, input: ContextBuilderInput) -> ContextResult:
         """Build context by analyzing conversation history with LLM.
@@ -53,11 +54,18 @@ class ContextBuilder(BaseContextBuilder):
                 input.history_dialog,
                 max_messages=self.context_max_messages,
             )
-            prompt = f"[PROMPT:context_summary_compact_v1]\n{CONTEXT_SUMMARY_PROMPT_COMPACT.format(conversation=conversation_text)}"
+            compact_prompt = self._prompt_manager.get_prompt_version(
+                PromptType.CONTEXT_SUMMARY,
+                PromptVersion.V2_COMPACT,
+            )
+            compact_prompt = (compact_prompt or "").strip()
+            prompt = f"[PROMPT:context_summary_compact_v1]\n{compact_prompt.format(conversation=conversation_text)}"
         else:
             # 使用完整版格式（用于调试）
             conversation_text = self._format_conversation(input.history_dialog)
-            prompt = f"[PROMPT:context_summary_full_v1]\n{CONTEXT_SUMMARY_PROMPT.format(conversation=conversation_text)}"
+            full_prompt = self._prompt_manager.get_active_prompt(PromptType.CONTEXT_SUMMARY)
+            full_prompt = (full_prompt or "").strip()
+            prompt = f"[PROMPT:context_summary_full_v1]\n{full_prompt.format(conversation=conversation_text)}"
         
         # Call LLM
         llm_call = LLMCall(

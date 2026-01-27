@@ -55,7 +55,7 @@ from app.models.schemas import (
 )
 from app.services.base import BasePersonaInferencer
 from app.services.llm_adapter import BaseLLMAdapter, LLMCall
-from app.services.prompt import *
+from app.services.prompt_manager import get_prompt_manager, PromptType
 # 添加 user_profile 到 path
 USER_PROFILE_PATH = Path(__file__).parent.parent.parent / "core" / "user_profile" / "src"
 if str(USER_PROFILE_PATH) not in sys.path:
@@ -343,6 +343,7 @@ class UserProfileService(BaseUserProfileService):
         self._context_analyzer = ContextAnalyzer()
         self._preference_learner = PreferenceLearner()
         self._llm_adapter = llm_adapter
+        self._prompt_manager = get_prompt_manager()
 
     def _load_trait_rules_from_yaml(self) -> dict[str, Any] | None:
         try:
@@ -816,7 +817,9 @@ class UserProfileService(BaseUserProfileService):
         conversation_text = self._format_conversation(messages)
         
         # 调用 LLM 分析场景
-        prompt = SCENARIO_ANALYSIS_PROMPT.format(conversation=conversation_text)
+        prompt_template = self._prompt_manager.get_active_prompt(PromptType.SCENARIO_ANALYSIS)
+        prompt_template = (prompt_template or "").strip()
+        prompt = prompt_template.format(conversation=conversation_text)
         llm_call = LLMCall(
             task_type="persona",
             prompt=prompt,
@@ -1061,7 +1064,9 @@ class UserProfileService(BaseUserProfileService):
         conversation_text = self._format_conversation(messages)
         print('conversation_text:', conversation_text)
         # 调用 LLM 分析对话偏好
-        prompt = PREFERENCE_ANALYSIS_PROMPT.format(conversation=conversation_text)
+        prompt_template = self._prompt_manager.get_active_prompt(PromptType.PREFERENCE_ANALYSIS)
+        prompt_template = (prompt_template or "").strip()
+        prompt = prompt_template.format(conversation=conversation_text)
         llm_call = LLMCall(
             task_type="persona",
             prompt=prompt,
@@ -1110,7 +1115,9 @@ class UserProfileService(BaseUserProfileService):
                 raise ValueError("messages must contain at least 10 messages")
             conversation_text = self._format_conversation(messages)
 
-        prompt = TRAIT_DISCOVERY_PROMPT.format(conversation=conversation_text)
+        prompt_template = self._prompt_manager.get_active_prompt(PromptType.TRAIT_DISCOVERY)
+        prompt_template = (prompt_template or "").strip()
+        prompt = prompt_template.format(conversation=conversation_text)
         llm_call = LLMCall(
             task_type="persona",
             prompt=prompt,
@@ -1285,7 +1292,9 @@ class UserProfileService(BaseUserProfileService):
                 }
             )
 
-        prompt = TRAIT_MAPPING_PROMPT.format(
+        prompt_template = self._prompt_manager.get_active_prompt(PromptType.TRAIT_MAPPING)
+        prompt_template = (prompt_template or "").strip()
+        prompt = prompt_template.format(
             standard_traits=json.dumps(CORE_STANDARD_TRAITS, ensure_ascii=False),
             traits_json=json.dumps(compact_traits, ensure_ascii=False),
         )
