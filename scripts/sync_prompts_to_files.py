@@ -17,21 +17,23 @@ from pathlib import Path
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-from app.services.prompt_compact import (
-    CONTEXT_SUMMARY_PROMPT_COMPACT,
-    CONTEXT_SUMMARY_PROMPT_COMPACT_V2,
-    SCENARIO_PROMPT_COMPACT,
-    SCENARIO_PROMPT_COMPACT_V2,
-    CHATCOACH_PROMPT_COMPACT,
-    CHATCOACH_PROMPT_COMPACT_V2,
-)
+from app.services.prompt_manager import PromptType, PromptVersion
+
+
+PROMPTS_DIR = project_root / "prompts"
+VERSIONS_DIR = PROMPTS_DIR / "versions"
+
+
+def _read_version(prompt_type: PromptType, version: PromptVersion) -> str:
+    path = VERSIONS_DIR / f"{prompt_type.value}_{version.value}.txt"
+    return path.read_text(encoding="utf-8").strip()
 
 
 def sync_prompts():
     """同步所有 prompt 到文件系统"""
     
-    prompts_dir = project_root / "prompts"
-    versions_dir = prompts_dir / "versions"
+    prompts_dir = PROMPTS_DIR
+    versions_dir = VERSIONS_DIR
     metadata_dir = prompts_dir / "metadata"
     active_dir = prompts_dir / "active"
     registry_file = prompts_dir / "registry.json"
@@ -51,54 +53,37 @@ def sync_prompts():
     # 定义要同步的 prompt
     prompts_to_sync = [
         {
-            "name": "context_summary",
-            "version": "v3.0-compact",
-            "content": CONTEXT_SUMMARY_PROMPT_COMPACT,
-            "description": "Context summary - compact version (same as v2.0)",
-            "version_id": "context_summary_compact_v1",
-        },
-        {
-            "name": "context_summary",
-            "version": "v3.1-compact_v2",
-            "content": CONTEXT_SUMMARY_PROMPT_COMPACT_V2,
+            "name": PromptType.CONTEXT_SUMMARY.value,
+            "version": PromptVersion.V3_1_COMPACT_V2.value,
+            "content": _read_version(PromptType.CONTEXT_SUMMARY, PromptVersion.V3_1_COMPACT_V2),
             "description": "Context summary - compact V2 with compressed output",
             "version_id": "context_summary_compact_v2",
         },
         {
-            "name": "scenario_analysis",
-            "version": "v3.0-compact",
-            "content": SCENARIO_PROMPT_COMPACT,
-            "description": "Scenario analysis - compact version",
-            "version_id": "scene_analyzer_compact_v1",
-        },
-        {
-            "name": "scenario_analysis",
-            "version": "v3.1-compact_v2",
-            "content": SCENARIO_PROMPT_COMPACT_V2,
+            "name": PromptType.SCENARIO_ANALYSIS.value,
+            "version": PromptVersion.V3_1_COMPACT_V2.value,
+            "content": _read_version(PromptType.SCENARIO_ANALYSIS, PromptVersion.V3_1_COMPACT_V2),
             "description": "Scenario analysis - compact V2 with compressed codes",
             "version_id": "scene_analyzer_compact_v2",
         },
         {
-            "name": "reply_generation",
-            "version": "v3.0-compact",
-            "content": CHATCOACH_PROMPT_COMPACT,
+            "name": PromptType.REPLY_GENERATION.value,
+            "version": PromptVersion.V2_COMPACT.value,
+            "content": _read_version(PromptType.REPLY_GENERATION, PromptVersion.V2_COMPACT),
             "description": "Reply generation - compact version with reasoning",
             "version_id": "reply_generation_compact_v1",
         },
         {
-            "name": "reply_generation",
-            "version": "v3.1-compact_v2_with_reasoning",
-            "content": CHATCOACH_PROMPT_COMPACT_V2,
+            "name": PromptType.REPLY_GENERATION.value,
+            "version": PromptVersion.V3_1_COMPACT_V2_WITH_REASONING.value,
+            "content": _read_version(PromptType.REPLY_GENERATION, PromptVersion.V3_1_COMPACT_V2_WITH_REASONING),
             "description": "Reply generation - compact V2 with reasoning",
             "version_id": "reply_generation_compact_v2_with_reasoning",
         },
         {
-            "name": "reply_generation",
-            "version": "v3.2-compact_v2_no_reasoning",
-            "content": CHATCOACH_PROMPT_COMPACT_V2.replace(
-                "Include reasoning for each reply option.",
-                "Exclude reasoning to save tokens."
-            ),
+            "name": PromptType.REPLY_GENERATION.value,
+            "version": PromptVersion.V3_2_COMPACT_V2_WITHOUT_REASONING.value,
+            "content": _read_version(PromptType.REPLY_GENERATION, PromptVersion.V3_2_COMPACT_V2_WITHOUT_REASONING),
             "description": "Reply generation - compact V2 without reasoning (most optimized)",
             "version_id": "reply_generation_compact_v2_no_reasoning",
         },
@@ -170,9 +155,9 @@ def sync_prompts():
     
     # 5. 更新 active/ 目录（指向最新版本）
     active_versions = {
-        "context_summary": "v3.1-compact_v2",
-        "scenario_analysis": "v3.1-compact_v2",
-        "reply_generation": "v3.2-compact_v2_no_reasoning",  # 最优化版本
+        PromptType.CONTEXT_SUMMARY.value: PromptVersion.V3_1_COMPACT_V2.value,
+        PromptType.SCENARIO_ANALYSIS.value: PromptVersion.V3_1_COMPACT_V2.value,
+        PromptType.REPLY_GENERATION.value: PromptVersion.V3_2_COMPACT_V2_WITHOUT_REASONING.value,  # 最优化版本
     }
     
     print("更新 active/ 目录:")

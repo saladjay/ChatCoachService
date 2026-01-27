@@ -1,4 +1,3 @@
-
 Professional dating coach. Generate 3 reply suggestions.
 
 ## Context
