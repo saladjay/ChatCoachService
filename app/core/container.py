@@ -50,6 +50,7 @@ from app.services.image_fetcher import ImageFetcher
 from app.services.prompt_builder import PromptBuilder
 from app.services.multimodal_llm_adapter import MultimodalLLMClient
 from app.services.result_normalizer import ResultNormalizer
+from app.services.session_categorized_cache_service import SessionCategorizedCacheService
 
 
 T = TypeVar("T")
@@ -210,6 +211,9 @@ class ServiceContainer:
         
         if not self.has("screenshot_parser"):
             self.register("screenshot_parser", self._create_screenshot_parser())
+
+        if not self.has("session_categorized_cache"):
+            self.register("session_categorized_cache", self._create_session_categorized_cache_service())
 
         self._initialized = True
 
@@ -483,6 +487,21 @@ class ServiceContainer:
         self._initialize_services()
         return self.get("screenshot_parser")
 
+    def _create_session_categorized_cache_service(self) -> SessionCategorizedCacheService:
+        cfg = self.config.cache
+        return SessionCategorizedCacheService(
+            redis_url=cfg.redis_url,
+            sqlite_path=cfg.sqlite_path,
+            ttl_seconds=cfg.ttl_seconds,
+            timeline_max_items=cfg.timeline_max_items,
+            cleanup_interval_seconds=cfg.cleanup_interval_seconds,
+            redis_key_prefix=cfg.redis_key_prefix,
+        )
+
+    def get_session_categorized_cache_service(self) -> SessionCategorizedCacheService:
+        self._initialize_services()
+        return self.get("session_categorized_cache")
+
     def create_orchestrator(
         self,
         persistence_service: PersistenceService | None = None,
@@ -504,6 +523,7 @@ class ServiceContainer:
         )
         
         strategy_planner = self.get_strategy_planner()
+        cache_service = self.get_session_categorized_cache_service()
         
         return Orchestrator(
             context_builder=self.get_context_builder(),
@@ -513,6 +533,7 @@ class ServiceContainer:
             intimacy_checker=self.get_intimacy_checker(),
             billing_service=self.get_billing_service(),
             persistence_service=persistence_service,
+            cache_service=cache_service,
             config=orchestrator_config,
             billing_config=self.config.billing,
             strategy_planner=strategy_planner,
