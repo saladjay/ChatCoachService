@@ -1,0 +1,17 @@
+{
+  "prompt_id": "reply_generation_v3.0-compact",
+  "prompt_type": "reply_generation",
+  "version": "v3.0-compact",
+  "created_at": "2026-01-22T15:43:12.276567",
+  "author": "system",
+  "description": "Reply generation - compact version with reasoning",
+  "tags": [
+    "compact",
+    "optimized",
+    "token-reduced"
+  ],
+  "token_estimate": 146,
+  "performance_notes": "Version ID: reply_generation_compact_v1",
+  "is_active": false,
+  "parent_version": null
+}

@@ -1,0 +1,16 @@
+{
+  "prompt_id": "intimacy_check_v1.0-original",
+  "prompt_type": "intimacy_check",
+  "version": "v1.0-original",
+  "created_at": "2026-01-22T16:00:00.000000",
+  "author": "initial_dev",
+  "description": "Intimacy boundary check - original verbose version",
+  "tags": ["qc", "intimacy", "moderation", "original"],
+  "token_estimate": 150,
+  "performance_notes": "Used in PromptLLMThirdPartyIntimacyAdapter for checking reply appropriateness",
+  "is_active": false,
+  "parent_version": null,
+  "category": "quality_control",
+  "task_type": "qc",
+  "language": "zh-CN"
+}

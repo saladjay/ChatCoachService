@@ -1,0 +1,17 @@
+{
+  "prompt_id": "context_summary_v3.0-compact",
+  "prompt_type": "context_summary",
+  "version": "v3.0-compact",
+  "created_at": "2026-01-22T15:43:12.273380",
+  "author": "system",
+  "description": "Context summary - compact version (same as v2.0)",
+  "tags": [
+    "compact",
+    "optimized",
+    "token-reduced"
+  ],
+  "token_estimate": 118,
+  "performance_notes": "Version ID: context_summary_compact_v1",
+  "is_active": false,
+  "parent_version": null
+}

@@ -1,0 +1,17 @@
+{
+  "prompt_id": "scenario_analysis_v3.1-compact_v2",
+  "prompt_type": "scenario_analysis",
+  "version": "v3.1-compact_v2",
+  "created_at": "2026-01-22T15:43:12.275876",
+  "author": "system",
+  "description": "Scenario analysis - compact V2 with compressed codes",
+  "tags": [
+    "compact",
+    "optimized",
+    "token-reduced"
+  ],
+  "token_estimate": 376,
+  "performance_notes": "Version ID: scene_analyzer_compact_v2",
+  "is_active": false,
+  "parent_version": null
+}

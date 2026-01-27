@@ -45,6 +45,11 @@ from app.services.user_profile_impl import (
 )
 from app.services.persistence import PersistenceService
 from app.services.intimacy_checker_impl import ModerationServiceIntimacyChecker
+from app.services.screenshot_parser import ScreenshotParserService
+from app.services.image_fetcher import ImageFetcher
+from app.services.prompt_builder import PromptBuilder
+from app.services.multimodal_llm_adapter import MultimodalLLMClient
+from app.services.result_normalizer import ResultNormalizer
 
 
 T = TypeVar("T")
@@ -189,6 +194,22 @@ class ServiceContainer:
                 "billing_service",
                 BillingService(default_quota_usd=self.config.billing.default_user_quota_usd)
             )
+
+        # Register screenshot parser service components
+        if not self.has("image_fetcher"):
+            self.register("image_fetcher", self._create_image_fetcher())
+        
+        if not self.has("prompt_builder"):
+            self.register("prompt_builder", self._create_prompt_builder())
+        
+        if not self.has("multimodal_llm_client"):
+            self.register("multimodal_llm_client", self._create_multimodal_llm_client())
+        
+        if not self.has("result_normalizer"):
+            self.register("result_normalizer", self._create_result_normalizer())
+        
+        if not self.has("screenshot_parser"):
+            self.register("screenshot_parser", self._create_screenshot_parser())
 
         self._initialized = True
 
@@ -405,6 +426,60 @@ class ServiceContainer:
         self._initialize_services()
         return self.get("strategy_planner") if self.has("strategy_planner") else None
 
+    def _create_image_fetcher(self) -> ImageFetcher:
+        """Create ImageFetcher for screenshot parsing.
+        
+        Returns:
+            ImageFetcher instance.
+        """
+        return ImageFetcher(timeout=30.0)
+
+    def _create_prompt_builder(self) -> PromptBuilder:
+        """Create PromptBuilder for screenshot parsing.
+        
+        Returns:
+            PromptBuilder instance.
+        """
+        return PromptBuilder()
+
+    def _create_multimodal_llm_client(self) -> MultimodalLLMClient:
+        """Create MultimodalLLMClient for screenshot parsing.
+        
+        Returns:
+            MultimodalLLMClient instance.
+        """
+        return MultimodalLLMClient(config=self.config)
+
+    def _create_result_normalizer(self) -> ResultNormalizer:
+        """Create ResultNormalizer for screenshot parsing.
+        
+        Returns:
+            ResultNormalizer instance.
+        """
+        return ResultNormalizer()
+
+    def _create_screenshot_parser(self) -> ScreenshotParserService:
+        """Create ScreenshotParserService with all dependencies.
+        
+        Returns:
+            ScreenshotParserService instance.
+        """
+        return ScreenshotParserService(
+            image_fetcher=self.get("image_fetcher"),
+            prompt_builder=self.get("prompt_builder"),
+            llm_client=self.get("multimodal_llm_client"),
+            result_normalizer=self.get("result_normalizer"),
+        )
+
+    def get_screenshot_parser(self) -> ScreenshotParserService:
+        """Get the screenshot parser service.
+        
+        Returns:
+            ScreenshotParserService instance.
+        """
+        self._initialize_services()
+        return self.get("screenshot_parser")
+
     def create_orchestrator(
         self,
         persistence_service: PersistenceService | None = None,
@@ -449,13 +524,14 @@ def get_container() -> ServiceContainer:
     """Get the global service container instance.
     
     Creates a new container if one doesn't exist.
+    Uses REAL mode by default for production use.
     
     Returns:
         The global ServiceContainer instance.
     """
     global _container
     if _container is None:
-        _container = ServiceContainer()
+        _container = ServiceContainer(mode=ServiceMode.REAL)
     return _container
 
 

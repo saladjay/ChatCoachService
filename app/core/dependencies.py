@@ -25,6 +25,7 @@ from app.services.billing import BillingService
 from app.services.orchestrator import Orchestrator
 from app.services.persistence import PersistenceService
 from app.services.user_profile_impl import BaseUserProfileService
+from app.services.screenshot_parser import ScreenshotParserService
 
 
 def get_service_container() -> ServiceContainer:
@@ -185,6 +186,20 @@ def get_intimacy_checker(
     return container.get_intimacy_checker()
 
 
+def get_screenshot_parser(
+    container: Annotated[ServiceContainer, Depends(get_service_container)]
+) -> ScreenshotParserService:
+    """Get the screenshot parser service dependency.
+    
+    Args:
+        container: The service container (injected).
+    
+    Returns:
+        ScreenshotParserService instance.
+    """
+    return container.get_screenshot_parser()
+
+
 # Type aliases for cleaner route signatures
 ServiceContainerDep = Annotated[ServiceContainer, Depends(get_service_container)]
 OrchestratorDep = Annotated[Orchestrator, Depends(get_orchestrator)]
@@ -195,5 +210,6 @@ PersonaInferencerDep = Annotated[BasePersonaInferencer, Depends(get_persona_infe
 UserProfileServiceDep = Annotated[BaseUserProfileService, Depends(get_user_profile_service)]
 ReplyGeneratorDep = Annotated[BaseReplyGenerator, Depends(get_reply_generator)]
 IntimacyCheckerDep = Annotated[BaseIntimacyChecker, Depends(get_intimacy_checker)]
+ScreenshotParserDep = Annotated[ScreenshotParserService, Depends(get_screenshot_parser)]
 DbSessionDep = Annotated[AsyncSession, Depends(get_db_session)]
 PersistenceServiceDep = Annotated[PersistenceService, Depends(get_persistence_service)]

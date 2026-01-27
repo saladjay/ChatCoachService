@@ -1,0 +1,55 @@
+# ChatCoach API Configuration Example
+# Copy this file to config.yaml and customize as needed
+
+# API v1 Configuration
+v1:
+  # Screenshot processing configuration
+  screenshot:
+    # List of supported chat applications
+    supported_apps:
+      - whatsapp
+      - telegram
+      - discord
+      - wechat
+      - line
+      - instagram
+    
+    # List of supported languages
+    supported_languages:
+      - en    # English
+      - zh    # Chinese
+      - es    # Spanish
+      - ar    # Arabic
+      - pt    # Portuguese
+      - fr    # French
+      - de    # German
+      - ja    # Japanese
+      - ko    # Korean
+    
+    # Default confidence threshold for detection (0.0-1.0)
+    default_conf_threshold: 0.5
+    
+    # Timeout in seconds for model loading
+    model_load_timeout: 30.0
+    
+    # Update history every N calls
+    history_update_interval: 10
+  
+  # Logging configuration
+  logging:
+    # Main logging level: DEBUG, INFO, WARNING, ERROR, CRITICAL
+    level: "INFO"
+    
+    # Log message format
+    format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    
+    # Logging level for submodules (screenshotanalysis, paddleocr)
+    # Set to WARNING to reduce noise from these libraries
+    submodule_level: "WARNING"
+
+# Environment variable overrides:
+# - V1_SCREENSHOT__SUPPORTED_APPS: Comma-separated list of apps
+# - V1_SCREENSHOT__SUPPORTED_LANGUAGES: Comma-separated list of languages
+# - V1_SCREENSHOT__DEFAULT_CONF_THRESHOLD: Float value 0.0-1.0
+# - V1_LOGGING__LEVEL: Logging level string
+# - V1_LOGGING__SUBMODULE_LEVEL: Submodule logging level string

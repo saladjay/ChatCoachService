@@ -5,9 +5,22 @@ This module defines Pydantic models for:
 - GenerateReplyResponse: Output from the generate reply endpoint
 """
 
-from typing import Literal, List, Dict, Any
+from typing import Literal, List, Dict, Any, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+
+# Helper functions for validation - these will be imported from config
+def get_app_names() -> list[str]:
+    """Get supported app names from configuration."""
+    # This is a placeholder - will be replaced with actual config import
+    return ["whatsapp", "telegram", "discord", "wechat"]
+
+
+def get_languages() -> list[str]:
+    """Get supported languages from configuration."""
+    # This is a placeholder - will be replaced with actual config import
+    return ["en", "zh", "es", "ar", "pt"]
 
 
 class GenerateReplyRequest(BaseModel):
@@ -56,3 +69,51 @@ class ErrorResponse(BaseModel):
     details: list[str] | None = Field(
         default=None, description="Additional error details"
     )
+
+
+
+
+class PredictRequest(BaseModel):
+    urls: list[str] = Field(..., min_length=1, description="图片 URL 列表")
+    app_name: str = Field(..., description="聊天应用名称")
+    language: str = Field(..., description="语言代码")
+    user_id: str = Field(..., min_length=1, description="用户 ID")
+    request_id: Optional[str] = Field(None, description="请求 ID（可选）")
+    conf_threshold: Optional[float] = Field(None, ge=0.0, le=1.0, description="置信度阈值（可选，0.0-1.0）")
+    reply: bool = Field(False, description="是否获取建议回复（可选，默认 False）")
+
+    @field_validator("app_name")
+    @classmethod
+    def validate_app_name(cls, v: str) -> str:
+        allowed = get_app_names()
+        if v not in allowed:
+            raise ValueError(f"app_name must be one of {allowed}")
+        return v
+
+    @field_validator("language")
+    @classmethod
+    def validate_language(cls, v: str) -> str:
+        allowed = get_languages()
+        if v not in allowed:
+            raise ValueError(f"language must be one of {allowed}")
+        return v
+
+
+class DialogItem(BaseModel):
+    position: list[float]  # [min_x, min_y, max_x, max_y] 屏幕尺寸百分比 (0.0-1.0)
+    text: str  # 对话文字内容
+    speaker: str  # 发言者，"self" 或 "other"
+
+
+class ImageResult(BaseModel):
+    url: str
+    dialogs: list[DialogItem]
+
+
+class PredictResponse(BaseModel):
+    success: bool
+    message: str
+    user_id: str
+    request_id: Optional[str]
+    results: list[ImageResult]
+    suggested_replies: Optional[list[str]] = None
