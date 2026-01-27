@@ -13,7 +13,7 @@ import asyncio
 import logging
 import time
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, asdict
 from datetime import datetime
 from typing import Literal
 
@@ -31,6 +31,7 @@ from app.models.schemas import (
     ContextResult,
     IntimacyCheckInput,
     LLMCallRecord,
+    LLMResult,
     OrchestratorConfig,
     PersonaInferenceInput,
     PersonaSnapshot,
@@ -49,6 +50,8 @@ from app.services.base import (
 from app.services.billing import BillingService
 from app.services.fallback import FallbackStrategy
 from app.services.persistence import PersistenceService
+from app.services.session_categorized_cache_service import SessionCategorizedCacheService
+
 from app.observability.trace_logger import trace_logger
 
 logger = logging.getLogger(__name__)
@@ -93,6 +96,7 @@ class Orchestrator:
         intimacy_checker: BaseIntimacyChecker,
         billing_service: BillingService,
         persistence_service: PersistenceService | None = None,
+        cache_service: SessionCategorizedCacheService | None = None,
         config: OrchestratorConfig | None = None,
         billing_config: BillingConfig | None = None,
         strategy_planner: 'StrategyPlanner | None' = None,
@@ -107,6 +111,7 @@ class Orchestrator:
             intimacy_checker: Service for checking reply appropriateness.
             billing_service: Service for tracking costs.
             persistence_service: Optional service for persisting conversation summaries.
+            cache_service: Optional service for caching categorized events.
             config: Orchestrator configuration (retry, timeout settings).
             billing_config: Billing configuration (cost limits).
             strategy_planner: Optional strategy planner for Phase 2 optimization.
@@ -118,9 +123,76 @@ class Orchestrator:
         self.intimacy_checker = intimacy_checker
         self.billing_service = billing_service
         self.persistence_service = persistence_service
+        self.cache_service = cache_service
+
         self.config = config or OrchestratorConfig()
         self.billing_config = billing_config or BillingConfig()
         self.strategy_planner = strategy_planner
+
+
+    async def scenario_analysis(
+        self,
+        request: GenerateReplyRequest
+    ) -> SceneAnalysisResult:
+        """Analyze the conversation scenario.
+        Flow: Context_Builder → Scene_Analysis
+
+        """
+        if not await self.billing_service.check_quota(request.user_id):
+            logger.warning(f"Quota exceeded for user {request.user_id}")
+            raise QuotaExceededError(
+                message=f"User {request.user_id} has exceeded their quota",
+                user_id=request.user_id,
+            )
+        
+        # Initialize execution context
+        exec_ctx = ExecutionContext(
+            user_id=request.user_id,
+            conversation_id=request.conversation_id,
+            quality=request.quality,
+        )
+        
+        try:
+            # Step 1: Build context
+            cached_context = await self._get_cached_payload(request, "context_analysis")
+            if cached_context:
+                context = ContextResult(**cached_context)
+            else:
+                context = await self._execute_step(
+                    exec_ctx,
+                    "context_builder",
+                    self._build_context,
+                    request,
+                )
+                await self._append_cache_event(request, "context_analysis", context.model_dump(mode="json"))
+            
+            # Step 2: Analyze scene (传递 context 以获取当前亲密度)
+            cached_scene = await self._get_cached_payload(request, "scene_analysis")
+            if cached_scene:
+                scene = SceneAnalysisResult(**cached_scene)
+            else:
+                scene = await self._execute_step(
+                    exec_ctx,
+                    "scene_analysis",
+                    self._analyze_scene,
+                    request,
+                    context,  # 传递 context
+                )
+                await self._append_cache_event(request, "scene_analysis", scene.model_dump(mode="json"))
+            return scene
+            
+        except ContextBuildError as e:
+            # Fallback for context build failure (Requirement 4.4)
+            logger.error(f"Context build failed: {e}")
+            return self._create_fallback_response(exec_ctx, scene=None)
+            
+        except Exception as e:
+            # Log error and return friendly response (Requirement 4.5)
+            logger.exception(f"Orchestration error: {e}")
+            raise OrchestrationError(
+                message="An error occurred during generation",
+                original_error=e,
+            ) from e
 
     async def generate_reply(
         self, 
@@ -160,46 +232,74 @@ class Orchestrator:
         
         try:
             # Step 1: Build context
-            context = await self._execute_step(
-                exec_ctx,
-                "context_builder",
-                self._build_context,
-                request,
-            )
+            cached_context = await self._get_cached_payload(request, "context_analysis")
+            if cached_context:
+                context = ContextResult(**cached_context)
+            else:
+                context = await self._execute_step(
+                    exec_ctx,
+                    "context_builder",
+                    self._build_context,
+                    request,
+                )
+                await self._append_cache_event(request, "context_analysis", context.model_dump(mode="json"))
             
             # Step 2: Analyze scene (传递 context 以获取当前亲密度)
-            scene = await self._execute_step(
-                exec_ctx,
-                "scene_analysis",
-                self._analyze_scene,
-                request,
-                context,  # 传递 context
-            )
+            cached_scene = await self._get_cached_payload(request, "scene_analysis")
+            if cached_scene:
+                scene = SceneAnalysisResult(**cached_scene)
+            else:
+                scene = await self._execute_step(
+                    exec_ctx,
+                    "scene_analysis",
+                    self._analyze_scene,
+                    request,
+                    context,  # 传递 context
+                )
+                await self._append_cache_event(request, "scene_analysis", scene.model_dump(mode="json"))
             
             # Step 3: Infer persona
-            persona = await self._execute_step(
-                exec_ctx,
-                "persona_inference",
-                self._infer_persona,
-                request,
-                scene,
-            )
+            cached_persona = await self._get_cached_payload(request, "persona_analysis")
+            if cached_persona:
+                persona = PersonaSnapshot(**cached_persona)
+            else:
+                persona = await self._execute_step(
+                    exec_ctx,
+                    "persona_inference",
+                    self._infer_persona,
+                    request,
+                    scene,
+                )
+                await self._append_cache_event(request, "persona_analysis", persona.model_dump(mode="json"))
             
             # Phase 2: Step 3.5: Plan strategies (optional, if strategy_planner available)
             strategy_plan = None
             if self.strategy_planner:
-                strategy_plan = await self._execute_step(
-                    exec_ctx,
-                    "strategy_planning",
-                    self._plan_strategies,
-                    context,
-                    scene,
-                )
+                cached_strategy = await self._get_cached_payload(request, "strategy_plan")
+                if cached_strategy:
+                    from app.services.strategy_planner import StrategyPlanOutput
+
+                    strategy_plan = StrategyPlanOutput(**cached_strategy)
+                else:
+                    strategy_plan = await self._execute_step(
+                        exec_ctx,
+                        "strategy_planning",
+                        self._plan_strategies,
+                        context,
+                        scene,
+                    )
+                    await self._append_cache_event(request, "strategy_plan", asdict(strategy_plan))
             
             # Step 4 & 5: Generate reply with intimacy check (with retries)
-            reply_result, intimacy_result = await self._generate_with_retry(
-                exec_ctx, request, context, scene, persona, strategy_plan
-            )
+            cached_reply = await self._get_cached_payload(request, "reply")
+            if cached_reply:
+                reply_result = LLMResult(**cached_reply)
+            else:
+                reply_result, intimacy_result = await self._generate_with_retry(
+                    exec_ctx, request, context, scene, persona, strategy_plan
+                )
+                await self._append_cache_event(request, "reply", reply_result.model_dump(mode="json"))
+            
             # Record all billing records
             for record in exec_ctx.billing_records:
                 await self.billing_service.record_call(record)
@@ -699,3 +799,33 @@ class Orchestrator:
                 timestamp = dialog.get("timestamp", None)
             ))
         return messages
+
+    async def _get_cached_payload(self, request: GenerateReplyRequest, category: str) -> dict | None:
+        if self.cache_service is None or not request.resource or request.force_regenerate:
+            return None
+        try:
+            cached_event = await self.cache_service.get_resource_category_last(
+                session_id=request.conversation_id,
+                category=category,
+                resource=request.resource,
+            )
+            if cached_event:
+                payload = cached_event.get("payload")
+                if isinstance(payload, dict):
+                    return payload
+        except Exception as exc:
+            logger.warning("Cache read failed for category=%s: %s", category, exc)
+        return None
+
+    async def _append_cache_event(self, request: GenerateReplyRequest, category: str, payload: dict) -> None:
+        if self.cache_service is None or not request.resource:
+            return
+        try:
+            await self.cache_service.append_event(
+                session_id=request.conversation_id,
+                category=category,
+                resource=request.resource,
+                payload=payload,
+            )
+        except Exception as exc:
+            logger.warning("Cache append failed for category=%s: %s", category, exc)
