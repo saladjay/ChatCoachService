@@ -32,6 +32,36 @@ from app.services.user_profile_impl import (
 from app.models.schemas import Message
 
 
+def _style_from_profile(profile) -> str:
+    if profile is not None and profile.explicit and profile.explicit.style:
+        return profile.explicit.style[0]
+    return "理性"
+
+
+def _pacing_from_profile(profile) -> str:
+    if profile is None or not profile.session_state or not profile.session_state.scenario:
+        return "normal"
+    return {
+        ScenarioRiskLevel.SAFE: "slow",
+        ScenarioRiskLevel.BALANCED: "normal",
+        ScenarioRiskLevel.RISKY: "fast",
+        ScenarioRiskLevel.RECOVERY: "slow",
+        ScenarioRiskLevel.NEGATIVE: "slow",
+    }.get(profile.session_state.scenario.risk_level, "normal")
+
+
+def _risk_tolerance_from_profile(profile) -> str:
+    if profile is None or not profile.session_state or not profile.session_state.scenario:
+        return "medium"
+    return {
+        ScenarioRiskLevel.SAFE: "low",
+        ScenarioRiskLevel.BALANCED: "medium",
+        ScenarioRiskLevel.RISKY: "high",
+        ScenarioRiskLevel.RECOVERY: "low",
+        ScenarioRiskLevel.NEGATIVE: "low",
+    }.get(profile.session_state.scenario.risk_level, "medium")
+
+
 async def example_basic_profile():
     """基础画像操作示例"""
     print("\n" + "=" * 50)
@@ -44,20 +74,21 @@ async def example_basic_profile():
     # 创建画像
     profile = await svc.create_profile(user_id)
     print(f"\n✅ 创建画像: {profile.user_id}")
-    print(f"   默认风格: {profile.style}")
-    print(f"   默认节奏: {profile.pacing}")
-    print(f"   默认风险容忍: {profile.risk_tolerance}")
+    print(f"   默认风格: {_style_from_profile(profile)}")
+    print(f"   默认节奏: {_pacing_from_profile(profile)}")
+    print(f"   默认风险容忍: {_risk_tolerance_from_profile(profile)}")
     
     # 获取画像
     profile = await svc.get_profile(user_id)
     print(f"\n📖 获取画像: {profile.user_id}")
     
     # 更新画像
-    profile.style = "幽默"
+    if profile.explicit:
+        profile.explicit.style = ["幽默"]
     await svc.update_profile(profile)
     
     updated = await svc.get_profile(user_id)
-    print(f"\n🔄 更新后风格: {updated.style}")
+    print(f"\n🔄 更新后风格: {_style_from_profile(updated)}")
 
 
 async def example_explicit_tags():
@@ -79,10 +110,10 @@ async def example_explicit_tags():
     )
     
     print(f"\n✅ 设置显式标签:")
-    print(f"   角色: {profile.core_profile.explicit.role}")
-    print(f"   风格: {profile.core_profile.explicit.style}")
-    print(f"   禁止: {profile.core_profile.explicit.forbidden}")
-    print(f"   亲密度: {profile.core_profile.explicit.intimacy}")
+    print(f"   角色: {profile.explicit.role}")
+    print(f"   风格: {profile.explicit.style}")
+    print(f"   禁止: {profile.explicit.forbidden}")
+    print(f"   亲密度: {profile.explicit.intimacy}")
     
     # 添加自定义标签
     await svc.add_tag(user_id, "preference", "topic", "旅游")
@@ -134,8 +165,8 @@ async def example_scenario_analysis():
     strategies = await svc.get_recommended_strategies(user_id)
     print(f"   风险等级: SAFE")
     print(f"   推荐策略: {strategies}")
-    print(f"   画像节奏: {profile.pacing}")
-    print(f"   风险容忍: {profile.risk_tolerance}")
+    print(f"   画像节奏: {_pacing_from_profile(profile)}")
+    print(f"   风险容忍: {_risk_tolerance_from_profile(profile)}")
     
     # 场景2: 推进阶段 (Balanced)
     print("\n🎭 场景2: 推进阶段")
@@ -157,8 +188,8 @@ async def example_scenario_analysis():
     strategies = await svc.get_recommended_strategies(user_id)
     print(f"   风险等级: BALANCED")
     print(f"   推荐策略: {strategies}")
-    print(f"   画像节奏: {profile.pacing}")
-    print(f"   风险容忍: {profile.risk_tolerance}")
+    print(f"   画像节奏: {_pacing_from_profile(profile)}")
+    print(f"   风险容忍: {_risk_tolerance_from_profile(profile)}")
     
     # 场景3: 修复阶段 (Recovery)
     print("\n🎭 场景3: 修复阶段")
@@ -224,8 +255,8 @@ async def example_behavior_signals():
     
     # 获取更新后的画像
     profile = await svc.get_profile(user_id)
-    if profile.core_profile:
-        behavioral = profile.core_profile.behavioral
+    if profile and profile.behavioral:
+        behavioral = profile.behavioral
         print(f"\n📈 学习到的偏好:")
         print(f"   深度偏好: {behavioral.depth_preference.value:.2f}")
         print(f"   示例需求: {behavioral.example_need.value:.2f}")
@@ -404,19 +435,21 @@ async def example_multi_persona():
         forbidden=["幼稚", "轻浮"],
         intimacy=55.0,
     )
-    
     print("\n👥 三种人设对比:")
     
-    for user_id, name in [
-        (user_id_1, "文静妹子"),
-        (user_id_2, "活泼妹子"),
-        (user_id_3, "知性姐姐"),
+    for name, user_id in [
+        ("人设 1", user_id_1),
+        ("人设 2", user_id_2),
+        ("人设 3", user_id_3),
     ]:
         profile = await svc.get_profile(user_id)
         print(f"\n   {name}:")
-        print(f"     角色: {profile.core_profile.explicit.role}")
-        print(f"     风格: {profile.core_profile.explicit.style}")
-        print(f"     亲密度: {profile.core_profile.explicit.intimacy}")
+        print(f"     角色: {profile.explicit.role}")
+        print(f"     风格: {profile.explicit.style}")
+        print(f"     亲密度: {profile.explicit.intimacy}")
+        print(f"     风格推断: {_style_from_profile(profile)}")
+        print(f"     节奏推断: {_pacing_from_profile(profile)}")
+        print(f"     风险评估: {_risk_tolerance_from_profile(profile)}")
 
 
 async def main():

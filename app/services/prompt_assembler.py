@@ -246,8 +246,7 @@ class PromptAssembler:
     async def _compile_policy_block(self, user_id: str, messages: list[Any] | None = None) -> str:
         try:
             profile = await self.user_profile_service.get_profile(user_id)
-            core_profile = getattr(profile, "core_profile", None) if profile is not None else None
-            trait_vector = getattr(core_profile, "trait_vector", None) if core_profile is not None else None
+            trait_vector = getattr(profile, "trait_vector", None) if profile is not None else None
             compiled = compile_trait_vector_to_policy(trait_vector)
             rendered = format_policy_instructions(compiled.instructions)
             if rendered.strip():
@@ -267,8 +266,7 @@ class PromptAssembler:
                         map_to_standard=True,
                     )
                     profile = await self.user_profile_service.get_profile(user_id)
-                    core_profile = getattr(profile, "core_profile", None) if profile is not None else None
-                    trait_vector = getattr(core_profile, "trait_vector", None) if core_profile is not None else None
+                    trait_vector = getattr(profile, "trait_vector", None) if profile is not None else None
                     compiled = compile_trait_vector_to_policy(trait_vector)
                     rendered = format_policy_instructions(compiled.instructions)
                     if rendered.strip():

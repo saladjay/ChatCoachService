@@ -29,7 +29,6 @@ from app.services.user_profile_impl import (
     BaseUserProfileService,
     UserProfileService,
     UserProfilePersonaInferencer,
-    UserProfile,
 )
 from app.core.exceptions import (
     OrchestrationError,
@@ -68,5 +67,4 @@ __all__ = [
     "BaseUserProfileService",
     "UserProfileService",
     "UserProfilePersonaInferencer",
-    "UserProfile",
 ]
