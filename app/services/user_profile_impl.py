@@ -10,24 +10,24 @@ Requirements: 3.2
 
 主要接口速览（UserProfileService）：
 
-- get_profile(user_id) -> UserProfile | None
-- create_profile(user_id) -> UserProfile
+- get_profile(user_id) -> CoreUserProfile | None
+- create_profile(user_id) -> CoreUserProfile
 - update_profile(profile) -> None
-- get_or_create_profile(user_id) -> UserProfile
+- get_or_create_profile(user_id) -> CoreUserProfile
 
-- set_explicit_tags(user_id, role=None, style=None, forbidden=None, intimacy=None) -> UserProfile
+- set_explicit_tags(user_id, role=None, style=None, forbidden=None, intimacy=None) -> CoreUserProfile
 - add_tag(user_id, category, name, value) -> None
 - get_tags(user_id, category=None) -> list[dict]
 
-- analyze_scenario(user_id, conversation_id, messages=None, provider=None, model=None) -> UserProfile
-- analyze_scenario_manual(user_id, conversation_id, risk_level, intimacy=None) -> UserProfile
+- analyze_scenario(user_id, conversation_id, messages=None, provider=None, model=None) -> CoreUserProfile
+- analyze_scenario_manual(user_id, conversation_id, risk_level, intimacy=None) -> CoreUserProfile
 - get_recommended_strategies(user_id) -> list[str]
 - get_avoid_patterns(user_id) -> list[str]
 
 - analyze_context(user_id, conversation_id, messages) -> ContextualOverlay
 
 - update_from_behavior(user_id, asked_for_examples=False, asked_why=False, rejected_answer=False,
-  selected_response_index=None, message_length="medium", response_time_seconds=None, custom_signals=None) -> UserProfile
+  selected_response_index=None, message_length="medium", response_time_seconds=None, custom_signals=None) -> CoreUserProfile
 
 - learn_preferences_from_conversation(user_id, messages) -> list[LearnedPreference]
 - learn_new_traits(user_id, messages=None, selected_sentences=None, provider=None, model=None,
@@ -39,12 +39,10 @@ Requirements: 3.2
 - get_profile_for_llm(user_id) -> dict | None
 """
 
-import sys
-import importlib
 from abc import ABC, abstractmethod
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Literal, Optional
+from typing import Any
 import json
 import os
 
@@ -56,30 +54,15 @@ from app.models.schemas import (
 from app.services.base import BasePersonaInferencer
 from app.services.llm_adapter import BaseLLMAdapter, LLMCall
 from app.services.prompt_manager import get_prompt_manager, PromptType
-# 添加 user_profile 到 path
-USER_PROFILE_PATH = Path(__file__).parent.parent.parent / "core" / "user_profile" / "src"
-if str(USER_PROFILE_PATH) not in sys.path:
-    sys.path.insert(0, str(USER_PROFILE_PATH))
-
-importlib.invalidate_caches()
-_existing_user_profile = sys.modules.get("user_profile")
-if _existing_user_profile is not None:
-    _existing_file = getattr(_existing_user_profile, "__file__", None)
-    try:
-        _expected_prefix = str(USER_PROFILE_PATH.resolve())
-        if _existing_file is None:
-            del sys.modules["user_profile"]
-        else:
-            _existing_file = str(Path(_existing_file).resolve())
-            if not _existing_file.casefold().startswith(_expected_prefix.casefold()):
-                del sys.modules["user_profile"]
-    except Exception:
-        pass
 
 from user_profile import (
     # 核心管理器
     ProfileManager,
     
+    # 显式标签
+    load_explicit_tags_config,
+    ExplicitTagsConfig,
+
     # 数据模型
     UserProfile as CoreUserProfile,
     ExplicitTags,
@@ -119,6 +102,10 @@ from user_profile.preference_learner import (
     PreferenceSource,
 )
 
+# ============== exception ==============
+class UserProfileExplicitTagValueException(ValueError):
+    """用户画像服务异常。"""
+    pass
 
 # ============== 风格映射 ==============
 
@@ -149,86 +136,23 @@ RISK_TO_TOLERANCE = {
 }
 
 
-# ============== 兼容层：简化的 UserProfile ==============
-
-class UserProfile:
-    """简化的用户画像，用于兼容现有代码。
-    
-    内部使用 core/user_profile 的完整画像。
-    """
-    
-    def __init__(
-        self,
-        user_id: str,
-        style: Literal["理性", "感性", "幽默", "克制"] = "理性",
-        pacing: Literal["slow", "normal", "fast"] = "normal",
-        risk_tolerance: Literal["low", "medium", "high"] = "medium",
-        adoption_rate: float = 0.5,
-        created_at: datetime | None = None,
-        updated_at: datetime | None = None,
-        # 扩展字段
-        core_profile: Optional[CoreUserProfile] = None,
-    ):
-        self.user_id = user_id
-        self.style = style
-        self.pacing = pacing
-        self.risk_tolerance = risk_tolerance
-        self.adoption_rate = adoption_rate
-        self.created_at = created_at or datetime.utcnow()
-        self.updated_at = updated_at or datetime.utcnow()
-        self._core_profile = core_profile
-    
-    @property
-    def core_profile(self) -> Optional[CoreUserProfile]:
-        """获取底层的完整画像。"""
-        return self._core_profile
-    
-    @classmethod
-    def from_core_profile(cls, core_profile: CoreUserProfile) -> "UserProfile":
-        """从 core/user_profile 的画像创建简化画像。"""
-        # 从显式标签提取风格
-        style = "理性"
-        if core_profile.explicit.style:
-            first_style = core_profile.explicit.style[0]
-            style = STYLE_MAPPING.get(first_style, "理性")
-        
-        # 从场景分析提取节奏和风险容忍度
-        pacing = "normal"
-        risk_tolerance = "medium"
-        
-        if core_profile.session_state and core_profile.session_state.scenario:
-            scenario = core_profile.session_state.scenario
-            pacing = RISK_TO_PACING.get(scenario.risk_level, "normal")
-            risk_tolerance = RISK_TO_TOLERANCE.get(scenario.risk_level, "medium")
-        
-        return cls(
-            user_id=core_profile.user_id,
-            style=style,
-            pacing=pacing,
-            risk_tolerance=risk_tolerance,
-            created_at=core_profile.created_at,
-            updated_at=core_profile.updated_at,
-            core_profile=core_profile,
-        )
-
-
 # ============== 服务接口 ==============
 
 class BaseUserProfileService(ABC):
     """用户画像服务抽象基类。"""
     
     @abstractmethod
-    async def get_profile(self, user_id: str) -> UserProfile | None:
+    async def get_profile(self, user_id: str) -> CoreUserProfile | None:
         """获取用户画像。"""
         ...
     
     @abstractmethod
-    async def update_profile(self, profile: UserProfile) -> None:
+    async def update_profile(self, profile: CoreUserProfile) -> None:
         """更新用户画像。"""
         ...
     
     @abstractmethod
-    async def create_profile(self, user_id: str) -> UserProfile:
+    async def create_profile(self, user_id: str) -> CoreUserProfile:
         """创建用户画像。"""
         ...
     
@@ -396,30 +320,25 @@ class UserProfileService(BaseUserProfileService):
     
     # ==================== 基础操作 ====================
     
-    async def get_profile(self, user_id: str) -> UserProfile | None:
+    async def get_profile(self, user_id: str) -> CoreUserProfile | None:
         """获取用户画像。"""
         core_profile = self._manager.get_profile(user_id)
         if core_profile is None:
             return None
-        return UserProfile.from_core_profile(core_profile)
+        return core_profile
     
-    async def update_profile(self, profile: UserProfile) -> None:
+    async def update_profile(self, profile: CoreUserProfile) -> None:
         """更新用户画像。"""
-        core_profile = self._manager.get_or_create_profile(profile.user_id)
-        
-        # 更新显式标签
-        if profile.style:
-            core_profile.explicit.style = [profile.style]
-        
-        core_profile.explicit.updated_at = datetime.now()
-        self._manager.save_profile(core_profile)
+        if profile.explicit is not None:
+            profile.explicit.updated_at = datetime.now()
+        self._manager.save_profile(profile)
     
-    async def create_profile(self, user_id: str) -> UserProfile:
+    async def create_profile(self, user_id: str) -> CoreUserProfile:
         """创建用户画像。"""
         core_profile = self._manager.get_or_create_profile(user_id)
-        return UserProfile.from_core_profile(core_profile)
+        return core_profile
     
-    async def get_or_create_profile(self, user_id: str) -> UserProfile:
+    async def get_or_create_profile(self, user_id: str) -> CoreUserProfile:
         """获取或创建用户画像。"""
         profile = await self.get_profile(user_id)
         if profile is None:
@@ -680,7 +599,7 @@ class UserProfileService(BaseUserProfileService):
         style: list[str] | None = None,
         forbidden: list[str] | None = None,
         intimacy: float | None = None,
-    ) -> UserProfile:
+    ) -> CoreUserProfile:
         """设置用户的显式标签。
         
         Args:
@@ -700,7 +619,7 @@ class UserProfileService(BaseUserProfileService):
             forbidden=forbidden,
             intimacy=intimacy or 50.0,
         )
-        return UserProfile.from_core_profile(core_profile)
+        return core_profile
     
     async def add_tag(
         self,
@@ -734,7 +653,7 @@ class UserProfileService(BaseUserProfileService):
         use_llm: bool = True,
         provider=None,
         model=None
-    ) -> UserProfile:
+    ) -> CoreUserProfile:
         """分析对话场景并更新用户画像。
         
         使用 LLM 分析对话内容，自动推断场景风险等级、关系阶段、
@@ -791,8 +710,7 @@ class UserProfileService(BaseUserProfileService):
         
         # 更新画像
         core_profile = self._manager.update_session_state(user_id, session_state)
-        
-        return UserProfile.from_core_profile(core_profile)
+        return core_profile
     
     async def _analyze_scenario_with_llm(
         self,
@@ -889,7 +807,7 @@ class UserProfileService(BaseUserProfileService):
         avoid_patterns: list[str] | None = None,
         relationship_stage: str = "stranger",
         emotional_tone: str = "neutral",
-    ) -> UserProfile:
+    ) -> CoreUserProfile:
         """手动设置场景分析结果（不使用 LLM）。
         
         当你已经有场景分析结果时，可以直接使用此方法更新画像。
@@ -926,8 +844,7 @@ class UserProfileService(BaseUserProfileService):
         
         # 更新画像
         core_profile = self._manager.update_session_state(user_id, session_state)
-        
-        return UserProfile.from_core_profile(core_profile)
+        return core_profile
     
     async def get_recommended_strategies(self, user_id: str) -> list[str]:
         """获取当前推荐的策略列表。"""
@@ -1004,7 +921,7 @@ class UserProfileService(BaseUserProfileService):
         rejected_answer: bool = False,
         selected_response_index: int | None = None,
         message_length: str = "medium",
-    ) -> UserProfile:
+    ) -> CoreUserProfile:
         """根据行为信号更新用户画像。
         
         Args:
@@ -1027,7 +944,7 @@ class UserProfileService(BaseUserProfileService):
         )
         
         core_profile = self._manager.update_from_signals(user_id, signals)
-        return UserProfile.from_core_profile(core_profile)
+        return core_profile
     
     # ==================== 对话偏好学习 ====================
     
@@ -1598,7 +1515,7 @@ class UserProfilePersonaInferencer(BasePersonaInferencer):
         if input.persona and input.persona != '':
             print(f"更新用户 {input.user_id} 的 persona: {input.persona}")
             persona = json.loads(input.persona)
-            list_tags = self.user_profile_service.list_tags(input.user_id)
+            list_tags = self.user_profile_service.manager.list_tags(input.user_id)
             print(f"用户 {input.user_id} 的标签: {list_tags}")
             for tag in list_tags:
                 pass
@@ -1617,6 +1534,18 @@ class UserProfilePersonaInferencer(BasePersonaInferencer):
         
         # 计算置信度
         confidence = self._calculate_confidence(input, profile)
+
+        style = "理性"
+        if profile.explicit and profile.explicit.style:
+            first_style = profile.explicit.style[0]
+            style = STYLE_MAPPING.get(first_style, "理性")
+
+        pacing = "normal"
+        risk_tolerance = "medium"
+        if profile.session_state and profile.session_state.scenario:
+            scenario = profile.session_state.scenario
+            pacing = RISK_TO_PACING.get(scenario.risk_level, "normal")
+            risk_tolerance = RISK_TO_TOLERANCE.get(scenario.risk_level, "medium")
         
         # 生成 prompt 字符串
         prompt = await self.user_profile_service.serialize_to_prompt(
@@ -1627,12 +1556,12 @@ class UserProfilePersonaInferencer(BasePersonaInferencer):
         
         # 如果 prompt 为 None，使用默认值
         if prompt is None:
-            prompt = f"用户画像：风格={profile.style}，节奏={profile.pacing}，风险容忍度={profile.risk_tolerance}"
+            prompt = f"用户画像：风格={style}，节奏={pacing}，风险容忍度={risk_tolerance}"
         
         return PersonaSnapshot(
-            style=profile.style,
-            pacing=profile.pacing,
-            risk_tolerance=profile.risk_tolerance,
+            style=style,
+            pacing=pacing,
+            risk_tolerance=risk_tolerance,
             confidence=confidence,
             prompt=prompt,
         )
@@ -1640,7 +1569,7 @@ class UserProfilePersonaInferencer(BasePersonaInferencer):
     def _calculate_confidence(
         self,
         input: PersonaInferenceInput,
-        profile: UserProfile,
+        profile: CoreUserProfile,
     ) -> float:
         """计算置信度。"""
         base_confidence = 0.7
@@ -1657,8 +1586,8 @@ class UserProfilePersonaInferencer(BasePersonaInferencer):
         }
         scene_adjustment = scene_adjustments.get(input.scene, 0.0)
         
-        # 如果有完整的 core_profile，置信度更高
-        if profile.core_profile is not None:
+        # 如果有 trait_vector，置信度更高
+        if getattr(profile, "trait_vector", None) is not None:
             base_confidence += 0.05
         
         confidence = base_confidence + history_bonus + scene_adjustment

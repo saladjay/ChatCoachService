@@ -66,8 +66,7 @@ async def main() -> None:
     from user_profile import compile_trait_vector_to_policy, format_policy_instructions
 
     profile = await user_profile_service.get_profile(user_id)
-    core_profile = getattr(profile, "core_profile", None) if profile is not None else None
-    trait_vector = getattr(core_profile, "trait_vector", None) if core_profile is not None else None
+    trait_vector = getattr(profile, "trait_vector", None) if profile is not None else None
     compiled = compile_trait_vector_to_policy(trait_vector)
     policy_block = format_policy_instructions(compiled.instructions)
 
