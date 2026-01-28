@@ -553,6 +553,8 @@ class Orchestrator:
             scene=scene.recommended_scenario,  # 使用推荐场景
             history_dialog=self._dialogs_to_messages(request.dialogs),
             persona=request.persona,  # 用户提供的persona
+            intimacy=request.intimacy_value,  # 用户设置的亲密度
+            relationship_state=scene.relationship_state,
         )
         return await self.persona_inferencer.infer_persona(input_data)
     

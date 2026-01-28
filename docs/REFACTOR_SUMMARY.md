@@ -70,15 +70,14 @@ providers:
 
 ### API 使用示例
 ```python
-from app.services.multimodal_llm_adapter import MultimodalLLMClient
+from app.services.llm_adapter import MultimodalLLMClient
 
 # 初始化客户端
 client = MultimodalLLMClient()
 
 # 调用视觉模型
 response = await client.call(
-    system_prompt="You are a helpful assistant",
-    user_prompt="Describe this image",
+    prompt="You are a helpful assistant",
     image_base64="base64_encoded_image_data"
 )
 

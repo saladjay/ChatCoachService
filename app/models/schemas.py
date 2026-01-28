@@ -33,7 +33,7 @@ class EmotionSummary(BaseModel):
 class PersonaSnapshot(BaseModel):
     """Snapshot of inferred user persona characteristics."""
 
-    style: str
+    # style: str
     pacing: Literal["slow", "normal", "fast"]
     risk_tolerance: Literal["low", "medium", "high"]
     confidence: float = Field(ge=0.0, le=1.0, description="Confidence score from 0 to 1")
@@ -94,6 +94,9 @@ class PersonaInferenceInput(BaseModel):
     scene: str
     history_dialog: list[Message] = Field(default_factory=list)
     persona: str = ""
+    intimacy: int = Field(default=50, ge=0, le=100)
+    relationship_state: Literal["破冰", "推进", "冷却", "维持",
+                                "ignition","propulsion","ventilation","equilibrium"]
 
 
 class ReplyGenerationInput(BaseModel):

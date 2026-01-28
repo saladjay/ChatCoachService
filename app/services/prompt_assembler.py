@@ -12,7 +12,10 @@ from app.services.prompt_utils import (
 from app.services.user_profile_impl import BaseUserProfileService
 from user_profile import compile_trait_vector_to_policy, format_policy_instructions
 from user_profile.intimacy import intimacy_label_zh, intimacy_label_en
+import logging
 
+
+logger = logging.getLogger("app")
 
 # Phase 3: Reply length constraints by quality tier
 REPLY_LENGTH_CONSTRAINTS = {
@@ -94,10 +97,11 @@ class PromptAssembler:
 
         # 选择使用精简版或完整版 prompt
         if self.use_compact_prompt:
+            logger.info(f"use compact prompt for reply")
             # 获取精简的用户画像
             profile_dict = await self.user_profile_service.get_profile_for_llm(input.user_id)
             if profile_dict:
-                user_style_compact = format_user_style_compact(profile_dict)
+                user_style_compact = format_user_style_compact(profile_dict, language=language)
             else:
                 user_style_compact = "No profile available"
             
@@ -124,8 +128,8 @@ class PromptAssembler:
                 base_prompt = prompt_template.format(
                     recommended_scenario=recommended_scenario,
                     recommended_strategies=recommended_strategies,
-                    intimacy_level=intimacy_level,
-                    current_intimacy_level=current_intimacy_level,
+                    intimacy_level=f"{intimacy_level_label}({intimacy_level})",
+                    current_intimacy_level=f"{current_intimacy_level_label}({current_intimacy_level})",
                     emotion_state=emotion_state,
                     conversation_summary=conversation_summary,
                     user_style_compact=user_style_compact,
@@ -159,6 +163,7 @@ class PromptAssembler:
                 # Phase 3: Add length constraint
                 return f"[PROMPT:reply_generation_compact_v1]\n{base_prompt}\n\nLength Constraint: {length_guidance}"
         else:
+            logger.info(f"use full prompt for reply")
             # 完整版：用于调试和对比
             conversation = getattr(context, "history_conversation", "")
             if not isinstance(conversation, str) or not conversation.strip():

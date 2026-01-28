@@ -10,7 +10,7 @@ import json
 import re
 import sys
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 import httpx
 
@@ -300,6 +300,8 @@ class MultimodalLLMClient:
         self._provider: str | None = None
         self._model: str | None = None
 
+        self._registered_providers: dict[str, Any] = {}
+
         try:
             default_provider = self._config_manager.get_default_provider()
         except Exception:
@@ -341,6 +343,9 @@ class MultimodalLLMClient:
                 "with a 'multimodal' model and valid API key in core/llm_adapter/config.yaml"
             )
 
+    def register_provider(self, name: str, provider: Any) -> None:
+        self._registered_providers[name] = provider
+
     async def call(
         self,
         prompt: str,
@@ -349,6 +354,33 @@ class MultimodalLLMClient:
     ) -> MultimodalLLMResponse:
         selected_provider = provider if provider else self._provider
         selected_model = self._model
+
+        if provider and provider in self._registered_providers:
+            injected = self._registered_providers[provider]
+            try:
+                response_dict = await injected.call(
+                    prompt=prompt,
+                    image_base64=image_base64,
+                    provider=provider,
+                    model=selected_model,
+                )
+            except Exception as e:
+                raise RuntimeError(f"Vision API call failed: {e}")
+
+            try:
+                parsed_json = self._parse_json_response(response_dict["raw_text"])
+            except Exception as e:
+                raise RuntimeError(f"Failed to parse JSON from LLM response: {e}")
+
+            return MultimodalLLMResponse(
+                raw_text=response_dict["raw_text"],
+                parsed_json=parsed_json,
+                provider=response_dict.get("provider", provider),
+                model=response_dict.get("model", selected_model or ""),
+                input_tokens=response_dict.get("input_tokens", 0),
+                output_tokens=response_dict.get("output_tokens", 0),
+                cost_usd=response_dict.get("cost_usd", 0.0),
+            )
 
         if provider and provider != self._provider:
             try:

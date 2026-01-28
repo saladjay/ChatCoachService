@@ -757,8 +757,8 @@ async def test_property_19_response_structure_completeness(
             
             # Verify field types
             assert isinstance(bubble.bubble_id, str), f"Bubble {i} bubble_id must be string"
-            assert isinstance(bubble.center_x, int), f"Bubble {i} center_x must be integer"
-            assert isinstance(bubble.center_y, int), f"Bubble {i} center_y must be integer"
+            assert isinstance(bubble.center_x, float), f"Bubble {i} center_x must be float"
+            assert isinstance(bubble.center_y, float), f"Bubble {i} center_y must be float"
             assert isinstance(bubble.text, str), f"Bubble {i} text must be string"
             assert bubble.sender in ["user", "talker"], \
                 f"Bubble {i} sender must be 'user' or 'talker', got {bubble.sender}"
@@ -773,10 +773,10 @@ async def test_property_19_response_structure_completeness(
             assert hasattr(bubble.bbox, 'y1'), f"Bubble {i} bbox must have 'y1' field"
             assert hasattr(bubble.bbox, 'x2'), f"Bubble {i} bbox must have 'x2' field"
             assert hasattr(bubble.bbox, 'y2'), f"Bubble {i} bbox must have 'y2' field"
-            assert isinstance(bubble.bbox.x1, int), f"Bubble {i} bbox.x1 must be integer"
-            assert isinstance(bubble.bbox.y1, int), f"Bubble {i} bbox.y1 must be integer"
-            assert isinstance(bubble.bbox.x2, int), f"Bubble {i} bbox.x2 must be integer"
-            assert isinstance(bubble.bbox.y2, int), f"Bubble {i} bbox.y2 must be integer"
+            assert isinstance(bubble.bbox.x1, float), f"Bubble {i} bbox.x1 must be float"
+            assert isinstance(bubble.bbox.y1, float), f"Bubble {i} bbox.y1 must be float"
+            assert isinstance(bubble.bbox.x2, float), f"Bubble {i} bbox.x2 must be float"
+            assert isinstance(bubble.bbox.y2, float), f"Bubble {i} bbox.y2 must be float"
         
         # Requirement 9.7: data field must include layout object
         assert hasattr(response.data, 'layout'), "Data must have 'layout' field"
