@@ -47,8 +47,8 @@ from app.services.persistence import PersistenceService
 from app.services.intimacy_checker_impl import ModerationServiceIntimacyChecker
 from app.services.screenshot_parser import ScreenshotParserService
 from app.services.image_fetcher import ImageFetcher
-from app.services.prompt_builder import PromptBuilder
-from app.services.multimodal_llm_adapter import MultimodalLLMClient
+from app.services.prompt_manager import PromptManager
+from app.services.llm_adapter import MultimodalLLMClient
 from app.services.result_normalizer import ResultNormalizer
 from app.services.session_categorized_cache_service import SessionCategorizedCacheService
 
@@ -200,8 +200,8 @@ class ServiceContainer:
         if not self.has("image_fetcher"):
             self.register("image_fetcher", self._create_image_fetcher())
         
-        if not self.has("prompt_builder"):
-            self.register("prompt_builder", self._create_prompt_builder())
+        if not self.has("prompt_manager"):
+            self.register("prompt_manager", self._create_prompt_manager())
         
         if not self.has("multimodal_llm_client"):
             self.register("multimodal_llm_client", self._create_multimodal_llm_client())
@@ -441,13 +441,13 @@ class ServiceContainer:
         """
         return ImageFetcher(timeout=30.0)
 
-    def _create_prompt_builder(self) -> PromptBuilder:
-        """Create PromptBuilder for screenshot parsing.
+    def _create_prompt_manager(self) -> PromptManager:
+        """Create PromptManager for prompt version management.
         
         Returns:
-            PromptBuilder instance.
+            PromptManager instance.
         """
-        return PromptBuilder()
+        return PromptManager()
 
     def _create_multimodal_llm_client(self) -> MultimodalLLMClient:
         """Create MultimodalLLMClient for screenshot parsing.
@@ -473,7 +473,7 @@ class ServiceContainer:
         """
         return ScreenshotParserService(
             image_fetcher=self.get("image_fetcher"),
-            prompt_builder=self.get("prompt_builder"),
+            prompt_manager=self.get("prompt_manager"),
             llm_client=self.get("multimodal_llm_client"),
             result_normalizer=self.get("result_normalizer"),
         )

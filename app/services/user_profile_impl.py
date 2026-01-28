@@ -1594,6 +1594,16 @@ class UserProfilePersonaInferencer(BasePersonaInferencer):
         # 获取或创建用户画像
         profile = await self.user_profile_service.get_or_create_profile(input.user_id)
         
+        # 如果有用户提供的persona，更新到画像中
+        if input.persona and input.persona != '':
+            print(f"更新用户 {input.user_id} 的 persona: {input.persona}")
+            persona = json.loads(input.persona)
+            list_tags = self.user_profile_service.list_tags(input.user_id)
+            print(f"用户 {input.user_id} 的标签: {list_tags}")
+            for tag in list_tags:
+                pass
+                
+        
         # 如果有对话历史，进行上下文分析
         if input.history_dialog:
             overlay = await self.user_profile_service.analyze_context(
