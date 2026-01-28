@@ -159,5 +159,6 @@ class MockIntimacyChecker(BaseIntimacyChecker):
         return IntimacyCheckResult(
             passed=True,
             score=0.85,
+            scores=[0.85],
             reason=None,
         )

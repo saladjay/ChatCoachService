@@ -33,6 +33,8 @@ class PromptType(Enum):
     SCENARIO_ANALYSIS = "scenario_analysis"
     CONTEXT_SUMMARY = "context_summary"
     REPLY_GENERATION = "reply_generation"
+    STRATEGY_PLANNING = "strategy_planning"
+    INTIMACY_CHECK = "intimacy_check"
     TRAIT_DISCOVERY = "trait_discovery"
     TRAIT_MAPPING = "trait_mapping"
     SCREENSHOT_PARSE = "screenshot_parse"

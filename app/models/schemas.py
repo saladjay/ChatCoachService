@@ -136,6 +136,7 @@ class IntimacyCheckResult(BaseModel):
 
     passed: bool
     score: float = Field(ge=0.0, le=1.0)
+    scores: list[float] = Field(default_factory=list)
     reason: str | None = None
 
 

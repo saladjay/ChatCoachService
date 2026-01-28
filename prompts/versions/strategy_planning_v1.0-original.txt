@@ -1,0 +1,24 @@
+[PROMPT:strategy_planner_full_v1]
+You are a conversation strategy planner.
+
+Based on the scene analysis, recommend specific strategy weights for reply generation.
+
+## Scene Analysis
+- Recommended Scenario: {recommended_scenario}
+- Recommended Strategies: {recommended_strategies}
+- Intimacy Gap: Target={target_label}({intimacy_level}), Current={current_label}({current_intimacy_level})
+
+## Conversation Summary
+{conversation_summary}
+
+## Output Format (JSON)
+{
+  "recommended_scenario": "SAFE|BALANCED|RISKY|RECOVERY|NEGATIVE",
+  "strategy_weights": {
+    "strategy_name": 0.9,
+    "another_strategy": 0.7
+  },
+  "avoid_strategies": ["strategy_to_avoid"]
+}
+
+Provide weights (0-1) for the top 3-5 strategies to use.
