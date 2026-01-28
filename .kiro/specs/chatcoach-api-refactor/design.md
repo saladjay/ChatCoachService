@@ -310,7 +310,6 @@ class MetricsCollector:
 ```python
 class ScreenshotConfig(BaseModel):
     """Configuration for screenshot processing"""
-    supported_apps: list[str]  # ["whatsapp", "telegram", "discord", ...]
     supported_languages: list[str]  # ["en", "zh", "es", ...]
     default_conf_threshold: float = 0.5
     model_load_timeout: float = 30.0
@@ -445,7 +444,7 @@ Consolidated properties:
 **Validates: Requirements 4.9**
 
 **Property 7: Input Validation**
-*For any* predict request, if app_name is not in supported_apps OR language is not in supported_languages OR conf_threshold is outside [0.0, 1.0], the request should be rejected with a validation error
+*For any* predict request, if language is not in supported_languages OR conf_threshold is outside [0.0, 1.0], the request should be rejected with a validation error
 **Validates: Requirements 6.1, 6.2, 6.3**
 
 **Property 8: Response Format Consistency**
@@ -665,11 +664,6 @@ class ChatCoachConfig:
         config = load_yaml("config.yaml")
         config.update(load_env_overrides())
         return config
-    
-    @staticmethod
-    def get_app_names() -> list[str]:
-        """Get supported app names from config"""
-        return config.get("supported_apps", ["whatsapp", "telegram"])
     
     @staticmethod
     def get_languages() -> list[str]:

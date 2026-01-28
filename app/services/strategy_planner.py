@@ -25,6 +25,7 @@ from app.services.llm_adapter import BaseLLMAdapter, LLMCall
 from app.models.schemas import SceneAnalysisResult
 from app.models.schemas_compact import StrategyPlanCompact
 from app.services.schema_expander import SchemaExpander
+from user_profile.intimacy import intimacy_label_en
 
 
 @dataclass
@@ -133,6 +134,8 @@ class StrategyPlanner:
             Compact prompt string
         """
         scene = input.scene
+        target_label = intimacy_label_en(int(input.intimacy_level))
+        current_label = intimacy_label_en(int(input.current_intimacy_level))
         
         if self.use_compact:
             # Ultra-compact version
@@ -141,7 +144,7 @@ Strategy planner. Given scene analysis, recommend strategy weights.
 
 Scene: {scene.recommended_scenario}
 Strategies: {', '.join(scene.recommended_strategies[:3])}
-Intimacy: {input.intimacy_level} (target) vs {input.current_intimacy_level} (current)
+Intimacy: {target_label}({input.intimacy_level}) (target) vs {current_label}({input.current_intimacy_level}) (current)
 Summary: {input.conversation_summary[:100]}
 
 Output JSON (compact):
@@ -163,7 +166,7 @@ Based on the scene analysis, recommend specific strategy weights for reply gener
 ## Scene Analysis
 - Recommended Scenario: {scene.recommended_scenario}
 - Recommended Strategies: {', '.join(scene.recommended_strategies)}
-- Intimacy Gap: Target={input.intimacy_level}, Current={input.current_intimacy_level}
+- Intimacy Gap: Target={target_label}({input.intimacy_level}), Current={current_label}({input.current_intimacy_level})
 
 ## Conversation Summary
 {input.conversation_summary}

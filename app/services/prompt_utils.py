@@ -11,6 +11,8 @@ import re
 from typing import Tuple
 from enum import Enum
 
+from user_profile.intimacy import intimacy_label_en, intimacy_label_zh
+
 
 # Regex pattern to match prompt version identifier at the start of a prompt
 # Format: [PROMPT:identifier] or [PROMPT:identifier:version]
@@ -151,7 +153,7 @@ STANDARD_TRAITS = [
 # HELPER FUNCTIONS
 # ============================================================================
 
-def format_user_style_compact(profile_dict: dict) -> str:
+def format_user_style_compact(profile_dict: dict, language: str = "en", drop_behavioral=True) -> str:
     """
     Format user profile in compact form.
     
@@ -169,16 +171,25 @@ def format_user_style_compact(profile_dict: dict) -> str:
     if 'explicit' in profile_dict:
         explicit = profile_dict['explicit']
         if explicit.get('role'):
-            parts.append(f"Role: {', '.join(explicit['role'][:2])}")
+            parts.append(f"Role: {', '.join(explicit['role'])}")
         if explicit.get('response_style'):
-            parts.append(f"Style: {', '.join(explicit['response_style'][:2])}")
+            parts.append(f"Style: {', '.join(explicit['response_style'])}")
         if explicit.get('forbidden'):
-            parts.append(f"Avoid: {', '.join(explicit['forbidden'][:2])}")
+            parts.append(f"Avoid: {', '.join(explicit['forbidden'])}")
         if 'intimacy' in explicit:
-            parts.append(f"Intimacy: {explicit['intimacy']}/100")
+            try:
+                intimacy_value = int(float(explicit['intimacy']))
+                label = (
+                    intimacy_label_zh(intimacy_value)
+                    if str(language or "").lower().startswith("zh")
+                    else intimacy_label_en(intimacy_value)
+                )
+                parts.append(f"Intimacy: {label} ({intimacy_value}/100)")
+            except Exception:
+                parts.append(f"Intimacy: {explicit['intimacy']}")
     
     # Top traits only (compact)
-    if 'behavioral' in profile_dict:
+    if 'behavioral' in profile_dict and not drop_behavioral:
         behavioral = profile_dict['behavioral']
         top_traits = []
         for trait_name, trait_data in list(behavioral.items())[:3]:  # Top 3 only

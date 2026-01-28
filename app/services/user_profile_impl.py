@@ -42,9 +42,14 @@ Requirements: 3.2
 from abc import ABC, abstractmethod
 from datetime import datetime
 from pathlib import Path
+import traceback
 from typing import Any
 import json
 import os
+import logging
+
+
+logger = logging.getLogger("app")
 
 from app.models.schemas import (
     Message,
@@ -1513,59 +1518,69 @@ class UserProfilePersonaInferencer(BasePersonaInferencer):
         
         # 如果有用户提供的persona，更新到画像中
         if input.persona and input.persona != '':
-            print(f"更新用户 {input.user_id} 的 persona: {input.persona}")
+            logger.info(f"更新用户 {input.user_id} 的 persona: {input.persona}")
             persona = json.loads(input.persona)
+            logger.info(f"{persona}")
             list_tags = self.user_profile_service.manager.list_tags(input.user_id)
-            print(f"用户 {input.user_id} 的标签: {list_tags}")
-            if len(list_tags) == 0:
-                quick_setup_profile = self.user_profile_service.manager.quick_setup_profile(input.user_id, age=int(persona['age']), 
-                gender=persona['gender'], role=persona.get('persona', []), style=persona.get('style', []), risk_level=persona.get('risk_level', []))
-                list_tags = self.user_profile_service.manager.list_tags(input.user_id)
-                print(f"用户 {input.user_id} 的标签: {list_tags}")
-            else:
-                self.user_profile_service.manager.update_profile(input.user_id, age=int(persona['age']), 
-                gender=persona['gender'], role=persona.get('persona', []), style=persona.get('style', []), risk_level=persona.get('risk_level', []))
-        
-        # 如果有对话历史，进行上下文分析
-        if input.history_dialog:
-            overlay = await self.user_profile_service.analyze_context(
-                user_id=input.user_id,
-                conversation_id=input.conversation_id,
-                messages=input.history_dialog,
-            )
+            logger.info(f"用户 {input.user_id} 的标签: {list_tags}")
+
+            from user_profile import ExplicitTagValidationError
+            try:
+                quick_setup_profile = self.user_profile_service.manager.quick_setup_profile(
+                    input.user_id,
+                    age=int(persona['age']),
+                    intimacy=input.intimacy,
+                    gender=persona['gender'],
+                    role=persona.get('persona', []),
+                    style=persona.get('style', []),
+                    forbidden=persona.get('forbidden', []),
+                )
+                logger.info(f"1538 {quick_setup_profile.to_prompt_dict()}")
+            except ExplicitTagValidationError as e:
+                logger.error(f"用户 {input.user_id} 的 persona 标签验证失败: {e}")
+                raise
+            except Exception as e:
+                logger.error(traceback.format_exc())
+            profile = self.user_profile_service.manager.get_profile(input.user_id)
+            logger.info(f"1545 用户 {input.user_id} 的画像: {profile.to_prompt_dict()}")
+            list_tags = self.user_profile_service.manager.list_tags(input.user_id)
+            logger.info(f"用户 {input.user_id} 的标签: {list_tags}")
+
+        # 暂时不做上下文分析
+        # # 如果有对话历史，进行上下文分析
+        # if input.history_dialog:
+        #     overlay = await self.user_profile_service.analyze_context(
+        #         user_id=input.user_id,
+        #         conversation_id=input.conversation_id,
+        #         messages=input.history_dialog,
+        #     )
             
-            # 根据上下文调整画像
-            # 这里可以根据 overlay 的分析结果进一步调整
+        #     # 根据上下文调整画像
+        #     # 这里可以根据 overlay 的分析结果进一步调整
         
         # 计算置信度
-        logger.info(f"calculate_confidence | input: {input}")
+        logger.info(f"calculate_confidence | input: {input.scene}")
         confidence = self._calculate_confidence(input, profile)
 
-        style = "理性"
-        if profile.explicit and profile.explicit.style:
-            first_style = profile.explicit.style[0]
-            style = STYLE_MAPPING.get(first_style, "理性")
 
-        pacing = "normal"
-        risk_tolerance = "medium"
-        if profile.session_state and profile.session_state.scenario:
-            scenario = profile.session_state.scenario
-            pacing = RISK_TO_PACING.get(scenario.risk_level, "normal")
-            risk_tolerance = RISK_TO_TOLERANCE.get(scenario.risk_level, "medium")
+        current_scenario = input.scene.lower()
+        # "Safe|Balanced|Risky|Recovery|Negative"
+        pacing = RISK_TO_PACING.get(current_scenario)
+        risk_tolerance = RISK_TO_TOLERANCE.get(current_scenario)
         
         # 生成 prompt 字符串
         prompt = await self.user_profile_service.serialize_to_prompt(
             user_id=input.user_id,
             max_tokens=500,
-            language="zh"
+            language="en"
         )
         
         # 如果 prompt 为 None，使用默认值
         if prompt is None:
-            prompt = f"用户画像：风格={style}，节奏={pacing}，风险容忍度={risk_tolerance}"
-        
+            prompt = f"User profile: style={style}, pacing={pacing}, risk tolerance={risk_tolerance}"
+        logger.info(f"user persona prompt:{prompt}")
         return PersonaSnapshot(
-            style=style,
+            # style=style,
             pacing=pacing,
             risk_tolerance=risk_tolerance,
             confidence=confidence,
@@ -1589,6 +1604,10 @@ class UserProfilePersonaInferencer(BasePersonaInferencer):
             "推进": 0.0,
             "冷却": -0.05,
             "维持": 0.1,
+            "ignition": -0.1,
+            "propulsion": 0.0,
+            "ventilation": -0.05,
+            "equilibrium": 0.1
         }
         scene_adjustment = scene_adjustments.get(input.scene, 0.0)
         
