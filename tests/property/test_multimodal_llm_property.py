@@ -14,7 +14,7 @@ from PIL import Image
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from app.models.screenshot import ParseOptions, MultimodalLLMResponse
-from app.services.multimodal_llm_adapter import MultimodalLLMClient
+from app.services.llm_adapter import MultimodalLLMClient
 
 
 # Strategies for generating test data
@@ -98,21 +98,19 @@ class TestLLMInvocationWithCompleteParameters:
     @pytest.mark.asyncio
     @settings(max_examples=100, deadline=2000)
     @given(
-        system_prompt=prompt_strategy(),
-        user_prompt=prompt_strategy(),
+        prompt=prompt_strategy(),
         image_base64=image_base64_strategy(),
     )
     async def test_llm_call_receives_all_required_parameters(
         self,
-        system_prompt: str,
-        user_prompt: str,
+        prompt: str,
         image_base64: str,
     ):
         """
         Property 2: LLM call receives all required parameters
         
-        For any system prompt, user prompt, and image data, when calling the
-        multimodal LLM, all three parameters should be passed to the provider.
+        For any prompt and image data, when calling the multimodal LLM,
+        both parameters should be passed to the provider.
         
         **Validates: Requirements 1.2, 3.4**
         """
@@ -135,8 +133,7 @@ class TestLLMInvocationWithCompleteParameters:
         # Call the LLM
         try:
             response = await client.call(
-                system_prompt=system_prompt,
-                user_prompt=user_prompt,
+                prompt=prompt,
                 image_base64=image_base64,
                 provider="test",
             )
@@ -146,32 +143,28 @@ class TestLLMInvocationWithCompleteParameters:
         # Verify the provider was called
         assert mock_provider.call.called, "Provider should have been called"
         
-        # Verify all three parameters were passed
+        # Verify required parameters were passed
         call_args = mock_provider.call.call_args
         assert call_args is not None, "Provider should have been called with arguments"
         
         # Check keyword arguments
         kwargs = call_args.kwargs
-        assert "system_prompt" in kwargs, "system_prompt should be passed to provider"
-        assert "user_prompt" in kwargs, "user_prompt should be passed to provider"
+        assert "prompt" in kwargs, "prompt should be passed to provider"
         assert "image_base64" in kwargs, "image_base64 should be passed to provider"
         
         # Verify the values match what we passed
-        assert kwargs["system_prompt"] == system_prompt, "system_prompt should match input"
-        assert kwargs["user_prompt"] == user_prompt, "user_prompt should match input"
+        assert kwargs["prompt"] == prompt, "prompt should match input"
         assert kwargs["image_base64"] == image_base64, "image_base64 should match input"
     
     @pytest.mark.asyncio
     @settings(max_examples=100, deadline=2000)
     @given(
-        system_prompt=prompt_strategy(),
-        user_prompt=prompt_strategy(),
+        prompt=prompt_strategy(),
         image_base64=image_base64_strategy(),
     )
     async def test_llm_call_returns_response_with_metadata(
         self,
-        system_prompt: str,
-        user_prompt: str,
+        prompt: str,
         image_base64: str,
     ):
         """
@@ -200,8 +193,7 @@ class TestLLMInvocationWithCompleteParameters:
         
         # Call the LLM
         response = await client.call(
-            system_prompt=system_prompt,
-            user_prompt=user_prompt,
+            prompt=prompt,
             image_base64=image_base64,
             provider="test",
         )
@@ -233,20 +225,18 @@ class TestLLMInvocationWithCompleteParameters:
     @pytest.mark.asyncio
     @settings(max_examples=100, deadline=2000)
     @given(
-        system_prompt=prompt_strategy(),
-        user_prompt=prompt_strategy(),
+        prompt=prompt_strategy(),
         image_base64=image_base64_strategy(),
     )
     async def test_llm_call_with_empty_prompts_still_invokes_provider(
         self,
-        system_prompt: str,
-        user_prompt: str,
+        prompt: str,
         image_base64: str,
     ):
         """
         Property 2: LLM call with any prompts invokes provider
         
-        For any prompts (including empty strings), the LLM client should
+        For any prompt (including empty strings), the LLM client should
         still invoke the provider with all parameters.
         
         **Validates: Requirements 1.2, 3.4**
@@ -269,8 +259,7 @@ class TestLLMInvocationWithCompleteParameters:
         
         # Call the LLM (even with potentially empty prompts)
         await client.call(
-            system_prompt=system_prompt,
-            user_prompt=user_prompt,
+            prompt=prompt,
             image_base64=image_base64,
             provider="test",
         )
@@ -288,14 +277,12 @@ class TestLLMInvocationWithCompleteParameters:
     @pytest.mark.asyncio
     @settings(max_examples=50, deadline=2000)
     @given(
-        system_prompt=prompt_strategy(),
-        user_prompt=prompt_strategy(),
+        prompt=prompt_strategy(),
         image_base64=image_base64_strategy(),
     )
     async def test_llm_call_preserves_parameter_values(
         self,
-        system_prompt: str,
-        user_prompt: str,
+        prompt: str,
         image_base64: str,
     ):
         """
@@ -330,18 +317,14 @@ class TestLLMInvocationWithCompleteParameters:
         
         # Call the LLM
         await client.call(
-            system_prompt=system_prompt,
-            user_prompt=user_prompt,
+            prompt=prompt,
             image_base64=image_base64,
             provider="test",
         )
         
         # Verify captured arguments match exactly
-        assert captured_args["system_prompt"] == system_prompt, (
-            "system_prompt should be passed unchanged"
-        )
-        assert captured_args["user_prompt"] == user_prompt, (
-            "user_prompt should be passed unchanged"
+        assert captured_args["prompt"] == prompt, (
+            "prompt should be passed unchanged"
         )
         assert captured_args["image_base64"] == image_base64, (
             "image_base64 should be passed unchanged"
@@ -350,14 +333,12 @@ class TestLLMInvocationWithCompleteParameters:
     @pytest.mark.asyncio
     @settings(max_examples=50, deadline=2000)
     @given(
-        system_prompt=prompt_strategy(),
-        user_prompt=prompt_strategy(),
+        prompt=prompt_strategy(),
         image_base64=image_base64_strategy(),
     )
     async def test_llm_call_fails_gracefully_on_provider_error(
         self,
-        system_prompt: str,
-        user_prompt: str,
+        prompt: str,
         image_base64: str,
     ):
         """
@@ -380,8 +361,7 @@ class TestLLMInvocationWithCompleteParameters:
         # Call the LLM and expect an error (RuntimeError or Exception)
         with pytest.raises((RuntimeError, Exception)) as exc_info:
             await client.call(
-                system_prompt=system_prompt,
-                user_prompt=user_prompt,
+                prompt=prompt,
                 image_base64=image_base64,
                 provider="test",
             )
@@ -395,14 +375,12 @@ class TestLLMInvocationWithCompleteParameters:
     @pytest.mark.asyncio
     @settings(max_examples=50, deadline=2000)
     @given(
-        system_prompt=prompt_strategy(),
-        user_prompt=prompt_strategy(),
+        prompt=prompt_strategy(),
         image_base64=image_base64_strategy(),
     )
     async def test_llm_response_includes_raw_text_and_parsed_json(
         self,
-        system_prompt: str,
-        user_prompt: str,
+        prompt: str,
         image_base64: str,
     ):
         """
@@ -431,8 +409,7 @@ class TestLLMInvocationWithCompleteParameters:
         
         # Call the LLM
         response = await client.call(
-            system_prompt=system_prompt,
-            user_prompt=user_prompt,
+            prompt=prompt,
             image_base64=image_base64,
             provider="test",
         )

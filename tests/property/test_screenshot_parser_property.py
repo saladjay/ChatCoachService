@@ -9,8 +9,8 @@ from hypothesis import given, strategies as st
 from unittest.mock import AsyncMock, Mock
 from app.services.screenshot_parser import ScreenshotParserService
 from app.services.image_fetcher import ImageFetcher, FetchedImage
-from app.services.prompt_builder import PromptBuilder
-from app.services.multimodal_llm_adapter import MultimodalLLMClient, MultimodalLLMResponse
+from app.services.prompt_manager import PromptManager
+from app.services.llm_adapter import MultimodalLLMClient
 from app.services.result_normalizer import ResultNormalizer
 from app.models.screenshot import (
     ParseScreenshotRequest,
@@ -20,6 +20,7 @@ from app.models.screenshot import (
     Participants,
     LayoutInfo,
     ChatBubble,
+    MultimodalLLMResponse,
 )
 
 
@@ -156,14 +157,14 @@ async def test_property_3_output_structure_normalization(
     """
     # Create mock components
     image_fetcher = Mock(spec=ImageFetcher)
-    prompt_builder = Mock(spec=PromptBuilder)
+    prompt_manager = Mock(spec=PromptManager)
     llm_client = Mock(spec=MultimodalLLMClient)
     result_normalizer = ResultNormalizer()  # Use real normalizer
     
     # Create service
     service = ScreenshotParserService(
         image_fetcher=image_fetcher,
-        prompt_builder=prompt_builder,
+        prompt_manager=prompt_manager,
         llm_client=llm_client,
         result_normalizer=result_normalizer
     )
@@ -177,11 +178,8 @@ async def test_property_3_output_structure_normalization(
         format="jpeg"
     ))
     
-    # Mock prompt builder
-    prompt_builder.build_prompts = Mock(return_value=(
-        "system prompt",
-        "user prompt"
-    ))
+    # Mock prompt manager
+    prompt_manager.get_active_prompt = Mock(return_value="system prompt")
     
     # Mock LLM client to return the test JSON
     llm_client.call = AsyncMock(return_value=MultimodalLLMResponse(
@@ -282,14 +280,14 @@ async def test_property_17_low_confidence_marking(
     """
     # Create mock components
     image_fetcher = Mock(spec=ImageFetcher)
-    prompt_builder = Mock(spec=PromptBuilder)
+    prompt_manager = Mock(spec=PromptManager)
     llm_client = Mock(spec=MultimodalLLMClient)
     result_normalizer = ResultNormalizer()  # Use real normalizer
     
     # Create service
     service = ScreenshotParserService(
         image_fetcher=image_fetcher,
-        prompt_builder=prompt_builder,
+        prompt_manager=prompt_manager,
         llm_client=llm_client,
         result_normalizer=result_normalizer
     )
@@ -303,11 +301,8 @@ async def test_property_17_low_confidence_marking(
         format="jpeg"
     ))
     
-    # Mock prompt builder
-    prompt_builder.build_prompts = Mock(return_value=(
-        "system prompt",
-        "user prompt"
-    ))
+    # Mock prompt manager
+    prompt_manager.get_active_prompt = Mock(return_value="system prompt")
     
     # Create bubbles with the given confidence scores
     bubbles = []
@@ -440,14 +435,14 @@ async def test_property_18_cost_and_session_tracking_metadata(
     """
     # Create mock components
     image_fetcher = Mock(spec=ImageFetcher)
-    prompt_builder = Mock(spec=PromptBuilder)
+    prompt_manager = Mock(spec=PromptManager)
     llm_client = Mock(spec=MultimodalLLMClient)
     result_normalizer = ResultNormalizer()  # Use real normalizer
     
     # Create service
     service = ScreenshotParserService(
         image_fetcher=image_fetcher,
-        prompt_builder=prompt_builder,
+        prompt_manager=prompt_manager,
         llm_client=llm_client,
         result_normalizer=result_normalizer
     )
@@ -461,11 +456,8 @@ async def test_property_18_cost_and_session_tracking_metadata(
         format="jpeg"
     ))
     
-    # Mock prompt builder
-    prompt_builder.build_prompts = Mock(return_value=(
-        "system prompt",
-        "user prompt"
-    ))
+    # Mock prompt manager
+    prompt_manager.get_active_prompt = Mock(return_value="system prompt")
     
     # Create valid LLM response JSON
     llm_response_json = {
@@ -589,14 +581,14 @@ async def test_property_19_response_structure_completeness(
     """
     # Create mock components
     image_fetcher = Mock(spec=ImageFetcher)
-    prompt_builder = Mock(spec=PromptBuilder)
+    prompt_manager = Mock(spec=PromptManager)
     llm_client = Mock(spec=MultimodalLLMClient)
     result_normalizer = ResultNormalizer()  # Use real normalizer
     
     # Create service
     service = ScreenshotParserService(
         image_fetcher=image_fetcher,
-        prompt_builder=prompt_builder,
+        prompt_manager=prompt_manager,
         llm_client=llm_client,
         result_normalizer=result_normalizer
     )
@@ -610,11 +602,8 @@ async def test_property_19_response_structure_completeness(
         format="jpeg"
     ))
     
-    # Mock prompt builder
-    prompt_builder.build_prompts = Mock(return_value=(
-        "system prompt",
-        "user prompt"
-    ))
+    # Mock prompt manager
+    prompt_manager.get_active_prompt = Mock(return_value="system prompt")
     
     if is_success:
         # Create valid LLM response JSON for success case

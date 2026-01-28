@@ -552,6 +552,7 @@ class Orchestrator:
             conversation_id=request.conversation_id,
             scene=scene.recommended_scenario,  # 使用推荐场景
             history_dialog=self._dialogs_to_messages(request.dialogs),
+            persona=request.persona,  # 用户提供的persona
         )
         return await self.persona_inferencer.infer_persona(input_data)
     

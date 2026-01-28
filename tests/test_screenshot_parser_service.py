@@ -8,6 +8,7 @@ import pytest
 from unittest.mock import AsyncMock, Mock
 
 from app.services.screenshot_parser import ScreenshotParserService
+from app.services.prompt_manager import PromptManager, PromptType
 from app.models.screenshot import (
     ParseScreenshotRequest,
     ParseScreenshotResponse,
@@ -39,14 +40,11 @@ def mock_image_fetcher():
 
 
 @pytest.fixture
-def mock_prompt_builder():
-    """Create a mock PromptBuilder."""
-    builder = Mock()
-    builder.build_prompts = Mock(return_value=(
-        "System prompt",
-        "User prompt"
-    ))
-    return builder
+def mock_prompt_manager():
+    """Create a mock PromptManager."""
+    manager = Mock(spec=PromptManager)
+    manager.get_active_prompt = Mock(return_value="System prompt")
+    return manager
 
 
 @pytest.fixture
@@ -121,14 +119,14 @@ def mock_result_normalizer():
 @pytest.fixture
 def screenshot_parser_service(
     mock_image_fetcher,
-    mock_prompt_builder,
+    mock_prompt_manager,
     mock_llm_client,
     mock_result_normalizer
 ):
     """Create a ScreenshotParserService with mocked dependencies."""
     return ScreenshotParserService(
         image_fetcher=mock_image_fetcher,
-        prompt_builder=mock_prompt_builder,
+        prompt_manager=mock_prompt_manager,
         llm_client=mock_llm_client,
         result_normalizer=mock_result_normalizer
     )
@@ -295,7 +293,7 @@ async def test_parse_screenshot_default_options(screenshot_parser_service):
 async def test_parse_screenshot_workflow_order(
     screenshot_parser_service,
     mock_image_fetcher,
-    mock_prompt_builder,
+    mock_prompt_manager,
     mock_llm_client,
     mock_result_normalizer
 ):
@@ -310,7 +308,7 @@ async def test_parse_screenshot_workflow_order(
     
     # Verify all components were called
     mock_image_fetcher.fetch_image.assert_called_once_with(request.image_url)
-    mock_prompt_builder.build_prompts.assert_called_once()
+    mock_prompt_manager.get_active_prompt.assert_called_once_with(PromptType.SCREENSHOT_PARSE)
     mock_llm_client.call.assert_called_once()
     mock_result_normalizer.normalize.assert_called_once()
     
@@ -670,13 +668,14 @@ async def test_error_messages_are_descriptive():
     """
     # Create service with mocked dependencies
     mock_image_fetcher = Mock()
-    mock_prompt_builder = Mock()
+    mock_prompt_manager = Mock(spec=PromptManager)
+    mock_prompt_manager.get_active_prompt = Mock(return_value="sys")
     mock_llm_client = Mock()
     mock_result_normalizer = Mock()
     
     service = ScreenshotParserService(
         image_fetcher=mock_image_fetcher,
-        prompt_builder=mock_prompt_builder,
+        prompt_manager=mock_prompt_manager,
         llm_client=mock_llm_client,
         result_normalizer=mock_result_normalizer
     )
@@ -718,7 +717,7 @@ async def test_error_messages_are_descriptive():
             base64_data="fake_base64",
             format="jpeg"
         ))
-        mock_prompt_builder.build_prompts = Mock(return_value=("sys", "user"))
+        mock_prompt_manager.get_active_prompt = Mock(return_value="sys")
         mock_llm_client.call = AsyncMock(return_value=MultimodalLLMResponse(
             raw_text='{"test": "data"}',
             parsed_json={"test": "data"},
@@ -774,8 +773,8 @@ async def test_success_code_zero():
         format="jpeg"
     ))
     
-    mock_prompt_builder = Mock()
-    mock_prompt_builder.build_prompts = Mock(return_value=("sys", "user"))
+    mock_prompt_manager = Mock(spec=PromptManager)
+    mock_prompt_manager.get_active_prompt = Mock(return_value="sys")
     
     mock_llm_client = Mock()
     mock_llm_client.call = AsyncMock(return_value=MultimodalLLMResponse(
@@ -808,7 +807,7 @@ async def test_success_code_zero():
     
     service = ScreenshotParserService(
         image_fetcher=mock_image_fetcher,
-        prompt_builder=mock_prompt_builder,
+        prompt_manager=mock_prompt_manager,
         llm_client=mock_llm_client,
         result_normalizer=mock_result_normalizer
     )

@@ -8,6 +8,9 @@ from app.models.screenshot import (
     ParsedScreenshotData,
     ParseOptions,
     ImageMeta,
+    Participants,
+    Participant,
+    LayoutInfo,
     ChatBubble,
     BoundingBox,
 )
@@ -40,13 +43,18 @@ class ResultNormalizer:
         Raises:
             ValueError: If required fields are missing or invalid
         """
+        
+        if self._is_compact_output(raw_json):
+            raw_json = self._adapt_compact_output(raw_json)
+
         # Step 1: Validate required fields
         self._validate_required_fields(raw_json)
         
         # Step 2: Normalize bubbles
         normalized_bubbles = self._normalize_bubbles(
             raw_json["bubbles"],
-            image_meta.width
+            image_meta.width,
+            image_meta.height
         )
         
         # Step 3: Sort bubbles by position
@@ -57,8 +65,6 @@ class ResultNormalizer:
         
         # Step 5: Build participants
         participants_data = raw_json["participants"]
-        from app.models.screenshot import Participants, Participant
-        
         participants = Participants(
             self=Participant(
                 id=participants_data["self"]["id"],
@@ -72,8 +78,6 @@ class ResultNormalizer:
         
         # Step 6: Build layout
         layout_data = raw_json["layout"]
-        from app.models.screenshot import LayoutInfo
-        
         layout = LayoutInfo(
             type=layout_data.get("type", "two_columns"),
             left_role=layout_data["left_role"],
@@ -87,6 +91,77 @@ class ResultNormalizer:
             bubbles=sorted_bubbles,
             layout=layout
         )
+
+    def _is_compact_output(self, data: dict) -> bool:
+        if not isinstance(data, dict):
+            return False
+        if "participants" in data or "layout" in data:
+            return False
+        return "bubbles" in data
+
+    def _adapt_compact_output(self, data: dict) -> dict:
+        nicknames = data.get("nickname")
+        self_nickname = "user"
+        other_nickname = "talker"
+        if isinstance(nicknames, list):
+            cleaned = [str(n).strip() for n in nicknames if str(n).strip()]
+            if len(cleaned) >= 2:
+                self_nickname, other_nickname = cleaned[0], cleaned[1]
+            elif len(cleaned) == 1:
+                other_nickname = cleaned[0]
+
+        adapted_bubbles: list[dict] = []
+        for b in data.get("bubbles", []) or []:
+            if not isinstance(b, dict):
+                continue
+
+            bbox = b.get("bbox")
+            if isinstance(bbox, list) and len(bbox) == 4:
+                bbox_dict = {
+                    "x1": bbox[0],
+                    "y1": bbox[1],
+                    "x2": bbox[2],
+                    "y2": bbox[3],
+                }
+            elif isinstance(bbox, dict):
+                bbox_dict = bbox
+            else:
+                continue
+
+            sender = b.get("sender")
+            if isinstance(sender, str):
+                s = sender.strip().casefold()
+                if s == "u":
+                    sender_value = "user"
+                elif s == "t":
+                    sender_value = "talker"
+                elif s in {"user", "talker"}:
+                    sender_value = s
+                else:
+                    sender_value = None
+            else:
+                sender_value = None
+
+            bubble_dict: dict = {
+                "bbox": bbox_dict,
+                "text": b.get("text", ""),
+            }
+            if sender_value:
+                bubble_dict["sender"] = sender_value
+            adapted_bubbles.append(bubble_dict)
+
+        return {
+            "participants": {
+                "self": {"id": "user", "nickname": self_nickname},
+                "other": {"id": "talker", "nickname": other_nickname},
+            },
+            "bubbles": adapted_bubbles,
+            "layout": {
+                "type": "two_columns",
+                "left_role": "talker",
+                "right_role": "user",
+            },
+        }
 
     def _validate_required_fields(self, data: dict) -> None:
         """Check all required fields are present.
@@ -186,7 +261,8 @@ class ResultNormalizer:
     def _normalize_bubbles(
         self,
         bubbles: list[dict],
-        image_width: int
+        image_width: int,
+        image_height: int
     ) -> list[ChatBubble]:
         """Normalize bubble data with validation and defaults.
         
@@ -203,10 +279,10 @@ class ResultNormalizer:
             # Create BoundingBox
             bbox_dict = bubble_dict["bbox"]
             bbox = BoundingBox(
-                x1=int(bbox_dict["x1"]),
-                y1=int(bbox_dict["y1"]),
-                x2=int(bbox_dict["x2"]),
-                y2=int(bbox_dict["y2"])
+                x1=float(bbox_dict["x1"]) / image_width,
+                y1=float(bbox_dict["y1"]) / image_height,
+                x2=float(bbox_dict["x2"]) / image_width,
+                y2=float(bbox_dict["y2"]) / image_height
             )
             
             # Calculate center if not provided

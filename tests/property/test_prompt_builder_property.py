@@ -6,7 +6,6 @@ Tests:
 Validates: Requirements 3.1, 3.2
 """
 
-import json
 import pytest
 from hypothesis import given, settings, strategies as st
 
@@ -37,8 +36,8 @@ class TestPromptConstructionCompleteness:
     Property 8: Prompt Construction Completeness
     
     *For any* ParseOptions configuration, the Prompt_Builder should generate
-    both a system prompt containing task definition and a user prompt containing
-    parsing rules and JSON schema.
+    a system prompt loaded from prompt management. The user prompt is intentionally
+    empty to prevent large prompt edits via Python code.
     
     **Feature: chat-screenshot-parser, Property 8: Prompt Construction Completeness**
     **Validates: Requirements 3.1, 3.2**
@@ -53,7 +52,8 @@ class TestPromptConstructionCompleteness:
         Property 8: build_prompts returns both system and user prompts
         
         For any ParseOptions configuration, the build_prompts method should
-        return a tuple of (system_prompt, user_prompt) where both are non-empty strings.
+        return a tuple of (system_prompt, user_prompt) where system_prompt is non-empty
+        and user_prompt is an empty string.
         
         **Validates: Requirements 3.1, 3.2**
         """
@@ -65,10 +65,10 @@ class TestPromptConstructionCompleteness:
         # Verify both prompts are returned
         assert isinstance(system_prompt, str), "System prompt should be a string"
         assert isinstance(user_prompt, str), "User prompt should be a string"
-        
-        # Verify both prompts are non-empty
+
+        # Verify system prompt is non-empty and user prompt is empty
         assert len(system_prompt) > 0, "System prompt should not be empty"
-        assert len(user_prompt) > 0, "User prompt should not be empty"
+        assert user_prompt == "", "User prompt should be empty"
     
     @settings(max_examples=100)
     @given(options=parse_options_strategy())
@@ -105,129 +105,10 @@ class TestPromptConstructionCompleteness:
     
     @settings(max_examples=100)
     @given(options=parse_options_strategy())
-    def test_system_prompt_specifies_output_format_requirements(
-        self, options: ParseOptions
-    ):
-        """
-        Property 8: System prompt specifies output format requirements
-        
-        For any ParseOptions configuration, the system prompt should specify
-        that sender must be "user" or "talker" and column must be "left" or "right".
-        
-        **Validates: Requirements 3.1**
-        """
+    def test_user_prompt_is_empty(self, options: ParseOptions):
         builder = PromptBuilder()
-        
-        # Build prompts
-        system_prompt, _ = builder.build_prompts(options)
-        
-        system_prompt_lower = system_prompt.lower()
-        
-        # Verify sender requirements
-        assert "user" in system_prompt_lower, "System prompt should mention 'user'"
-        assert "talker" in system_prompt_lower, "System prompt should mention 'talker'"
-        
-        # Verify column requirements
-        assert "left" in system_prompt_lower, "System prompt should mention 'left'"
-        assert "right" in system_prompt_lower, "System prompt should mention 'right'"
-    
-    @settings(max_examples=100)
-    @given(options=parse_options_strategy())
-    def test_user_prompt_contains_parsing_rules(self, options: ParseOptions):
-        """
-        Property 8: User prompt contains parsing rules
-        
-        For any ParseOptions configuration, the user prompt should contain
-        parsing rules about bubble positioning and sender attribution.
-        
-        **Validates: Requirements 3.2**
-        """
-        builder = PromptBuilder()
-        
-        # Build prompts
         _, user_prompt = builder.build_prompts(options)
-        
-        # Verify user prompt contains parsing rules
-        user_prompt_lower = user_prompt.lower()
-        
-        # Basic parsing rules should always be present
-        assert "parse" in user_prompt_lower, "User prompt should mention 'parse'"
-        assert "left" in user_prompt_lower, "User prompt should mention 'left'"
-        assert "right" in user_prompt_lower, "User prompt should mention 'right'"
-        assert "bubbles" in user_prompt_lower or "bubble" in user_prompt_lower, (
-            "User prompt should mention 'bubbles'"
-        )
-    
-    @settings(max_examples=100)
-    @given(options=parse_options_strategy())
-    def test_user_prompt_contains_json_schema(self, options: ParseOptions):
-        """
-        Property 8: User prompt contains JSON schema
-        
-        For any ParseOptions configuration, the user prompt should contain
-        a JSON schema template defining the expected output structure.
-        
-        **Validates: Requirements 3.2**
-        """
-        builder = PromptBuilder()
-        
-        # Build prompts
-        _, user_prompt = builder.build_prompts(options)
-        
-        # Verify user prompt contains JSON schema
-        user_prompt_lower = user_prompt.lower()
-        
-        # Schema should mention key fields
-        schema_fields = [
-            "image_meta",
-            "participants",
-            "bubbles",
-            "layout",
-            "bbox",
-            "bubble_id",
-        ]
-        
-        for field in schema_fields:
-            assert field in user_prompt_lower, (
-                f"User prompt should contain JSON schema field '{field}'"
-            )
-    
-    @settings(max_examples=100)
-    @given(options=parse_options_strategy())
-    def test_user_prompt_json_schema_is_valid_json(self, options: ParseOptions):
-        """
-        Property 8: User prompt contains valid JSON schema
-        
-        For any ParseOptions configuration, the JSON schema in the user prompt
-        should be valid JSON that can be parsed.
-        
-        **Validates: Requirements 3.2**
-        """
-        builder = PromptBuilder()
-        
-        # Build prompts
-        _, user_prompt = builder.build_prompts(options)
-        
-        # Extract JSON from user prompt (it should be after "Return this exact JSON structure:")
-        # Find the JSON block
-        json_start = user_prompt.find("{")
-        json_end = user_prompt.rfind("}") + 1
-        
-        assert json_start != -1, "User prompt should contain JSON schema starting with '{'"
-        assert json_end > json_start, "User prompt should contain JSON schema ending with '}'"
-        
-        json_text = user_prompt[json_start:json_end]
-        
-        # Verify it's valid JSON
-        try:
-            parsed_schema = json.loads(json_text)
-        except json.JSONDecodeError as e:
-            pytest.fail(f"JSON schema in user prompt is not valid JSON: {e}")
-        
-        # Verify schema has expected top-level keys
-        expected_keys = ["image_meta", "participants", "bubbles", "layout"]
-        for key in expected_keys:
-            assert key in parsed_schema, f"JSON schema should have '{key}' key"
+        assert user_prompt == "", "User prompt should be empty"
     
     @settings(max_examples=100)
     @given(options=parse_options_strategy())
@@ -261,80 +142,10 @@ class TestPromptConstructionCompleteness:
     
     @settings(max_examples=100)
     @given(options=parse_options_strategy())
-    def test_user_prompt_includes_two_column_hint_when_forced(
-        self, options: ParseOptions
-    ):
-        """
-        Property 8: User prompt includes two-column hint when force_two_columns=True
-        
-        For any ParseOptions with force_two_columns=True, the user prompt should
-        include hints about two-column layout assumptions.
-        
-        **Validates: Requirements 3.2, 6.6**
-        """
+    def test_user_prompt_does_not_depend_on_options(self, options: ParseOptions):
         builder = PromptBuilder()
-        
-        # Build prompts
         _, user_prompt = builder.build_prompts(options)
-        
-        user_prompt_lower = user_prompt.lower()
-        
-        if options.force_two_columns:
-            # Should contain two-column hints
-            assert "two-column" in user_prompt_lower or "two column" in user_prompt_lower, (
-                "User prompt should mention 'two-column' when force_two_columns=True"
-            )
-        # Note: We don't test the negative case because the default might include it anyway
-    
-    @settings(max_examples=100)
-    @given(options=parse_options_strategy())
-    def test_user_prompt_includes_app_specific_hints(self, options: ParseOptions):
-        """
-        Property 8: User prompt includes app-specific hints when app_type is specified
-        
-        For any ParseOptions with app_type != "unknown", the user prompt should
-        include app-specific parsing hints.
-        
-        **Validates: Requirements 3.2, 6.7**
-        """
-        builder = PromptBuilder()
-        
-        # Build prompts
-        _, user_prompt = builder.build_prompts(options)
-        
-        user_prompt_lower = user_prompt.lower()
-        
-        if options.app_type != "unknown":
-            # Should contain app-specific hints
-            assert options.app_type.lower() in user_prompt_lower, (
-                f"User prompt should mention '{options.app_type}' when app_type={options.app_type}"
-            )
-    
-    @settings(max_examples=100)
-    @given(options=parse_options_strategy())
-    def test_user_prompt_includes_nickname_rule_when_needed(
-        self, options: ParseOptions
-    ):
-        """
-        Property 8: User prompt includes nickname extraction rule when need_nickname=True
-        
-        For any ParseOptions with need_nickname=True, the user prompt should
-        include a rule about extracting nicknames.
-        
-        **Validates: Requirements 3.2, 6.8**
-        """
-        builder = PromptBuilder()
-        
-        # Build prompts
-        _, user_prompt = builder.build_prompts(options)
-        
-        user_prompt_lower = user_prompt.lower()
-        
-        if options.need_nickname:
-            # Should contain nickname extraction rule
-            assert "nickname" in user_prompt_lower, (
-                "User prompt should mention 'nickname' when need_nickname=True"
-            )
+        assert user_prompt == "", "User prompt should always be empty"
     
     @settings(max_examples=100)
     @given(options=parse_options_strategy())

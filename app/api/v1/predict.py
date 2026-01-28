@@ -177,6 +177,141 @@ async def predict(
         )
 
 
+async def _get_screenshot_analysis_from_cache(content_url, session_id, cache_service):
+    cached_event = await cache_service.get_resource_category_last(
+        session_id=session_id,
+        category="image_result",
+        resource=content_url,
+    )
+    if cached_event:
+        cached_payload = cached_event.get("payload")
+        if isinstance(cached_payload, dict):
+            cached_result = ImageResult(**cached_payload)
+            logger.info(f"Using cached result for {content_url}")
+            return cached_result
+    return None
+
+async def _get_screenshot_analysis_from_local_service(content_url, screenshot_service):
+    try:
+        output_payload = await screenshot_service.analyze_screenshot(content_url)
+        for dialog_data in output_payload.get("dialogs", []):
+            # Extract box coordinates (in pixels)
+            box = dialog_data.get("box", [0, 0, 0, 0])
+            x1, y1, x2, y2 = box
+            
+            # Extract text content
+            text = dialog_data.get("text", "")
+            
+            # Extract confidence score
+            confidence = dialog_data.get("confidence", 0.0)
+            
+            # Create dialog object
+            dialog = Dialog(
+                box=[x1, y1, x2, y2],
+                text=text,
+                confidence=confidence
+            )
+            dialogs.append(dialog)
+        
+        # Create image result
+        result = ImageResult(
+            content_url=content_url,
+            dialogs=dialogs
+        )
+        
+        # Cache the result
+        await cache_service.set_resource_category(
+            session_id=request.session_id,
+            category="image_result",
+            resource=content_url,
+            payload=result.model_dump(),
+        )
+        
+        logger.info(f"Successfully analyzed screenshot: {content_url}")
+        return result
+        
+    except Exception as e:
+        logger.error(f"Error analyzing screenshot {content_url}: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to analyze screenshot: {str(e)}"
+        )
+
+async def get_screenshot_analysis_result(content_url, cache_service, screenshot_service, screenshot_parser) -> ImageResult:
+    # TODO: Implement screenshot analysis result retrieval
+    pass
+    try:
+        logger.info(f"Processing content: {content_url}")
+        cached_event = await cache_service.get_resource_category_last(
+            session_id=request.session_id,
+            category="image_result",
+            resource=content_url,
+        )
+        if cached_event:
+            cached_payload = cached_event.get("payload")
+            if isinstance(cached_payload, dict):
+                cached_result = ImageResult(**cached_payload)
+                logger.info(f"Using cached result for {content_url}")
+                return cached_result
+        else:
+            dialogs = []
+            try:
+                # raise Exception("Test exception")
+                output_payload = await screenshot_service.analyze_screenshot(content_url)
+                for dialog_data in output_payload.get("dialogs", []):
+                    # Extract box coordinates (in pixels)
+                    box = dialog_data.get("box", [0, 0, 0, 0])
+                    
+                    # Get speaker and determine from_user
+                    speaker = dialog_data.get("speaker", "unknown")
+                    from_user = (speaker == "user")
+                    
+                    # Create DialogItem with normalized coordinates
+                    dialog_item = DialogItem(
+                        position=box,
+                        text=dialog_data.get("text", ""),
+                        speaker=speaker,
+                        from_user=from_user,
+                    )
+                    dialogs.append(dialog_item)
+                
+                # Get scenario from output_payload or use default
+                scenario = output_payload.get("scenario", "")
+            except Exception as e:
+                logger.error(f"Error analyzing screenshot {content_url}: {e}")
+                if screenshot_parser is not None:
+                    parser_request = ParseScreenshotRequest(
+                        image_url=content_url,
+                        session_id=request.session_id,
+                    )
+                    parser_response = await screenshot_parser.parse_screenshot(parser_request)
+                    if parser_response.code == 0 and parser_response.data is not None:
+                        for bubble in parser_response.data.bubbles:
+                            dialog_item = DialogItem(
+                                position=[
+                                    bubble.bbox.x1,
+                                    bubble.bbox.y1,
+                                    bubble.bbox.x2,
+                                    bubble.bbox.y2,
+                                ],
+                                text=bubble.text,
+                                speaker=bubble.sender,
+                                from_user=(bubble.sender == "user"),
+                            )
+                            dialogs.append(dialog_item)
+                    else:
+                        raise
+                else:
+                    raise
+            
+            image_result = ImageResult(
+                content=content_url,
+                dialogs=dialogs,
+                scenario=scenario
+            )
+    except Exceptoin as e:
+        pass
+
 async def handle_image(
     request: PredictRequest,
     screenshot_service: ScreenshotAnalysisServiceDep,
@@ -211,6 +346,7 @@ async def handle_image(
             dialogs = []
             scenario = ""
             try:
+                # raise Exception("Test exception")
                 output_payload = await screenshot_service.analyze_screenshot(content_url)
                 for dialog_data in output_payload.get("dialogs", []):
                     # Extract box coordinates (in pixels)
@@ -352,6 +488,7 @@ async def handle_image(
                         dialogs=conversation,
                         language=request.language,
                         quality="normal",
+                        persona=request.other_properties
                     )
 
                     scenario_analysis_result = await orchestrator.scenario_analysis(orchestrator_request)
@@ -397,12 +534,14 @@ async def handle_image(
                         dialogs=conversation,
                         language=request.language,
                         quality="normal",
+                        persona=request.other_properties
                     )
 
                     orchestrator_response = await orchestrator.generate_reply(orchestrator_request)
                     # Requirement 9.4: Include suggested_replies in response if successful
                     if orchestrator_response and hasattr(orchestrator_response, "reply_text"):
                         try:
+                            logger.info(f"Orchestrator response: {orchestrator_response.reply_text}")
                             reply_text = json.loads(orchestrator_response.reply_text)
                             if isinstance(reply_text, dict):
                                 suggested_reply_items = reply_text.get("replies", [])

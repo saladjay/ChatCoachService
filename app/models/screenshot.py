@@ -57,10 +57,10 @@ class ParseScreenshotRequest(BaseModel):
 class BoundingBox(BaseModel):
     """Rectangular coordinates defining a chat bubble's position."""
 
-    x1: int = Field(..., description="Left x coordinate")
-    y1: int = Field(..., description="Top y coordinate")
-    x2: int = Field(..., description="Right x coordinate")
-    y2: int = Field(..., description="Bottom y coordinate")
+    x1: float = Field(..., description="Left x coordinate")
+    y1: float = Field(..., description="Top y coordinate")
+    x2: float = Field(..., description="Right x coordinate")
+    y2: float = Field(..., description="Bottom y coordinate")
 
 
 class ChatBubble(BaseModel):
@@ -68,8 +68,8 @@ class ChatBubble(BaseModel):
 
     bubble_id: str = Field(..., description="Unique identifier within screenshot")
     bbox: BoundingBox = Field(..., description="Bounding box coordinates")
-    center_x: int = Field(..., description="Horizontal center point")
-    center_y: int = Field(..., description="Vertical center point")
+    center_x: float = Field(..., description="Horizontal center point")
+    center_y: float = Field(..., description="Vertical center point")
     text: str = Field(..., description="Extracted text content")
     sender: Literal["user", "talker"] = Field(
         ...,

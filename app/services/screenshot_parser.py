@@ -16,8 +16,8 @@ from app.models.screenshot import (
     ImageMeta,
 )
 from app.services.image_fetcher import ImageFetcher
-from app.services.prompt_builder import PromptBuilder
-from app.services.multimodal_llm_adapter import MultimodalLLMClient
+from app.services.llm_adapter import MultimodalLLMClient
+from app.services.prompt_manager import PromptManager, PromptType
 from app.services.result_normalizer import ResultNormalizer
 
 
@@ -48,7 +48,7 @@ class ScreenshotParserService:
     def __init__(
         self,
         image_fetcher: ImageFetcher,
-        prompt_builder: PromptBuilder,
+        prompt_manager: PromptManager,
         llm_client: MultimodalLLMClient,
         result_normalizer: ResultNormalizer,
     ):
@@ -56,12 +56,12 @@ class ScreenshotParserService:
         
         Args:
             image_fetcher: Component for downloading and processing images
-            prompt_builder: Component for constructing LLM prompts
+            prompt_manager: Prompt version manager for loading active prompts
             llm_client: Component for calling multimodal LLM APIs
             result_normalizer: Component for validating and normalizing output
         """
         self.image_fetcher = image_fetcher
-        self.prompt_builder = prompt_builder
+        self.prompt_manager = prompt_manager
         self.llm_client = llm_client
         self.result_normalizer = result_normalizer
 
@@ -118,14 +118,19 @@ class ScreenshotParserService:
             
             # Step 2: Build prompts
             logger.info(f"[{session_id}] Building prompts for LLM")
-            system_prompt, user_prompt = self.prompt_builder.build_prompts(options)
+            prompt = self.prompt_manager.get_active_prompt(PromptType.SCREENSHOT_PARSE)
+            if not isinstance(prompt, str) or not prompt.strip():
+                return self._create_error_response(
+                    code=1002,
+                    message="No active screenshot_parse prompt configured",
+                    session_id=session_id,
+                )
             
             # Step 3: Call multimodal LLM (error code 1002, 1003)
             logger.info(f"[{session_id}] Calling multimodal LLM")
             try:
                 llm_response = await self.llm_client.call(
-                    system_prompt=system_prompt,
-                    user_prompt=user_prompt,
+                    prompt=prompt,
                     image_base64=fetched_image.base64_data,
                 )
                 logger.info(
@@ -167,6 +172,7 @@ class ScreenshotParserService:
                     width=fetched_image.width,
                     height=fetched_image.height
                 )
+                logger.info(f"llm response: {llm_response.parsed_json}")
                 parsed_data = self.result_normalizer.normalize(
                     raw_json=llm_response.parsed_json,
                     image_meta=image_meta,
