@@ -12,6 +12,7 @@ from app.services.prompt_manager import get_prompt_manager, PromptType, PromptVe
 from app.services.schema_expander import SchemaExpander, parse_and_expand_scene_analysis
 from app.models.schemas_compact import SceneAnalysisCompact
 import json
+from user_profile.intimacy import intimacy_label_en
 
 
 class SceneAnalyzer(BaseSceneAnalyzer):
@@ -139,11 +140,13 @@ class SceneAnalyzer(BaseSceneAnalyzer):
             Ultra-compact prompt string
         """
         # 只包含最必要的信息
+        target_label = intimacy_label_en(int(input.intimacy_value))
+        current_label = intimacy_label_en(int(input.current_intimacy_level))
         prompt = f"""[PROMPT:scene_analyzer_compact_v2]
 Scene analyzer. Analyze conversation and recommend scenario.
 
 Summary: {summary[:999]}
-Intimacy: target={input.intimacy_value}, current={input.current_intimacy_level}
+Intimacy: target={target_label}({input.intimacy_value}), current={current_label}({input.current_intimacy_level})
 
 Output JSON:
 {{"cs": "S|B|R|C|N", "rs": "S|B|R|C|N", "st": ["s1","s2","s3"]}}

@@ -237,7 +237,7 @@ class TestErrorScenarios:
         
         service = ScreenshotParserService(
             image_fetcher=mock_fetcher,
-            prompt_builder=Mock(spec=PromptBuilder),
+            prompt_manager=Mock(spec=PromptManager),
             llm_client=Mock(spec=MultimodalLLMClient),
             result_normalizer=Mock(spec=ResultNormalizer)
         )
@@ -262,10 +262,12 @@ class TestErrorScenarios:
         mock_fetcher.fetch_image = AsyncMock(
             side_effect=ValueError("Not a valid image format")
         )
+
+        mock_prompt_manager = Mock(spec=PromptManager)
         
         service = ScreenshotParserService(
             image_fetcher=mock_fetcher,
-            prompt_builder=Mock(spec=PromptBuilder),
+            prompt_manager=mock_prompt_manager,
             llm_client=Mock(spec=MultimodalLLMClient),
             result_normalizer=Mock(spec=ResultNormalizer)
         )
@@ -289,10 +291,12 @@ class TestErrorScenarios:
         mock_fetcher.fetch_image = AsyncMock(
             side_effect=ValueError("Corrupted image data")
         )
+
+        mock_prompt_manager = Mock(spec=PromptManager)
         
         service = ScreenshotParserService(
             image_fetcher=mock_fetcher,
-            prompt_builder=Mock(spec=PromptBuilder),
+            prompt_manager=mock_prompt_manager,
             llm_client=Mock(spec=MultimodalLLMClient),
             result_normalizer=Mock(spec=ResultNormalizer)
         )
@@ -320,15 +324,15 @@ class TestErrorScenarios:
             format="png"
         ))
         
-        mock_builder = Mock(spec=PromptBuilder)
-        mock_builder.build_prompts = Mock(return_value=("sys", "user"))
+        mock_prompt_manager = Mock(spec=PromptManager)
+        mock_prompt_manager.get_active_prompt = Mock(return_value="sys")
         
         mock_llm = Mock(spec=MultimodalLLMClient)
         mock_llm.call = AsyncMock(side_effect=RuntimeError("API rate limit exceeded"))
         
         service = ScreenshotParserService(
             image_fetcher=mock_fetcher,
-            prompt_builder=mock_builder,
+            prompt_manager=mock_prompt_manager,
             llm_client=mock_llm,
             result_normalizer=Mock(spec=ResultNormalizer)
         )
@@ -358,8 +362,8 @@ class TestErrorScenarios:
             format="png"
         ))
         
-        mock_builder = Mock(spec=PromptBuilder)
-        mock_builder.build_prompts = Mock(return_value=("sys", "user"))
+        mock_prompt_manager = Mock(spec=PromptManager)
+        mock_prompt_manager.get_active_prompt = Mock(return_value="sys")
         
         mock_llm = Mock(spec=MultimodalLLMClient)
         mock_llm.call = AsyncMock(
@@ -368,7 +372,7 @@ class TestErrorScenarios:
         
         service = ScreenshotParserService(
             image_fetcher=mock_fetcher,
-            prompt_builder=mock_builder,
+            prompt_manager=mock_prompt_manager,
             llm_client=mock_llm,
             result_normalizer=Mock(spec=ResultNormalizer)
         )
@@ -397,9 +401,9 @@ class TestErrorScenarios:
             base64_data="mock_base64",
             format="png"
         ))
-        
-        mock_builder = Mock(spec=PromptBuilder)
-        mock_builder.build_prompts = Mock(return_value=("sys", "user"))
+
+        mock_prompt_manager = Mock(spec=PromptManager)
+        mock_prompt_manager.get_active_prompt = Mock(return_value="sys")
         
         mock_llm = Mock(spec=MultimodalLLMClient)
         mock_llm.call = AsyncMock(return_value=Mock(
@@ -419,7 +423,7 @@ class TestErrorScenarios:
         
         service = ScreenshotParserService(
             image_fetcher=mock_fetcher,
-            prompt_builder=mock_builder,
+            prompt_manager=mock_prompt_manager,
             llm_client=mock_llm,
             result_normalizer=mock_normalizer
         )

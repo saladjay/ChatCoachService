@@ -16,7 +16,7 @@ Added the following imports:
 from app.services.screenshot_parser import ScreenshotParserService
 from app.services.image_fetcher import ImageFetcher
 from app.services.prompt_builder import PromptBuilder
-from app.services.multimodal_llm_adapter import MultimodalLLMClient
+from app.services.llm_adapter import MultimodalLLMClient
 from app.services.result_normalizer import ResultNormalizer
 ```
 
