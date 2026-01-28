@@ -334,8 +334,8 @@ async def run_example(provider: str | None = None, model: str | None = None, ver
         )
         
         # 获取场景分析结果
-        if profile.core_profile and profile.core_profile.session_state:
-            scenario = profile.core_profile.session_state.scenario
+        if profile.session_state and profile.session_state.scenario:
+            scenario = profile.session_state.scenario
             print("\n📊 场景分析结果:")
             print(f"   风险等级: {scenario.risk_level.value}")
             print(f"   关系阶段: {scenario.relationship_stage}")
@@ -346,9 +346,27 @@ async def run_example(provider: str | None = None, model: str | None = None, ver
         
         print("\n✅ 用户画像已更新")
         print(f"   user_id: {profile.user_id}")
-        print(f"   style: {profile.style}")
-        print(f"   pacing: {profile.pacing}")
-        print(f"   risk_tolerance: {profile.risk_tolerance}")
+        style = profile.explicit.style[0] if profile.explicit and profile.explicit.style else "理性"
+        pacing = "normal"
+        risk_tolerance = "medium"
+        if profile.session_state and profile.session_state.scenario:
+            pacing = {
+                ScenarioRiskLevel.SAFE: "slow",
+                ScenarioRiskLevel.BALANCED: "normal",
+                ScenarioRiskLevel.RISKY: "fast",
+                ScenarioRiskLevel.RECOVERY: "slow",
+                ScenarioRiskLevel.NEGATIVE: "slow",
+            }.get(profile.session_state.scenario.risk_level, "normal")
+            risk_tolerance = {
+                ScenarioRiskLevel.SAFE: "low",
+                ScenarioRiskLevel.BALANCED: "medium",
+                ScenarioRiskLevel.RISKY: "high",
+                ScenarioRiskLevel.RECOVERY: "low",
+                ScenarioRiskLevel.NEGATIVE: "low",
+            }.get(profile.session_state.scenario.risk_level, "medium")
+        print(f"   style: {style}")
+        print(f"   pacing: {pacing}")
+        print(f"   risk_tolerance: {risk_tolerance}")
         
         # 3. 使用 LLM 从对话学习用户偏好
         print("\n" + "=" * 50)
