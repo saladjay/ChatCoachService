@@ -6,14 +6,19 @@ through the over-seas-llm-platform-service library.
 Requirements: 3.3
 """
 
+import json
+import re
 import sys
 from pathlib import Path
 from typing import Literal
+
+import httpx
 
 from app.models.schemas import (
     LLMResult,
     ReplyGenerationInput,
 )
+from app.models.screenshot import MultimodalLLMResponse
 from app.services.base import BaseReplyGenerator
 
 # Add llm_adapter to path
@@ -21,7 +26,12 @@ LLM_ADAPTER_PATH = Path(__file__).parent.parent.parent / "core" / "llm_adapter"
 if str(LLM_ADAPTER_PATH) not in sys.path:
     sys.path.insert(0, str(LLM_ADAPTER_PATH))
 
-from llm_adapter import LLMAdapter as OverSeasLLMAdapter, LLMRequest, LLMAdapterError
+from llm_adapter import (
+    LLMAdapter as OverSeasLLMAdapter,
+    LLMRequest,
+    LLMAdapterError,
+    ConfigManager,
+)
 
 
 # Quality mapping: chatcoach quality -> over-seas-llm-platform-service quality
@@ -277,6 +287,218 @@ class LLMAdapterImpl(BaseLLMAdapter):
             Dictionary mapping tier names to model names
         """
         return self._adapter.get_provider_models(provider)
+
+
+class MultimodalLLMClient:
+    def __init__(self, config=None, config_path: str | None = None):
+        if config_path is None:
+            config_path = str(LLM_ADAPTER_PATH / "config.yaml")
+
+        self._config_manager = ConfigManager(config_path)
+        self._llm_adapter = OverSeasLLMAdapter(config_manager=self._config_manager)
+
+        self._provider: str | None = None
+        self._model: str | None = None
+
+        try:
+            default_provider = self._config_manager.get_default_provider()
+        except Exception:
+            default_provider = "openrouter"
+
+        provider_priority = [default_provider, "gemini", "dashscope", "openrouter", "openai"]
+        seen: set[str] = set()
+        ordered_providers: list[str] = []
+        for p in provider_priority:
+            if p and p not in seen:
+                ordered_providers.append(p)
+                seen.add(p)
+
+        last_error: Exception | None = None
+        for provider_name in ordered_providers:
+            try:
+                provider_config = self._config_manager.get_provider_config(provider_name)
+                multimodal_model = provider_config.models.multimodal
+                if not multimodal_model:
+                    continue
+
+                api_key = (provider_config.api_key or "").strip()
+                if not api_key:
+                    continue
+
+                self._provider = provider_name
+                self._model = multimodal_model
+                break
+            except Exception as e:
+                last_error = e
+                continue
+
+        if last_error is not None and (not self._provider or not self._model):
+            raise RuntimeError(f"Failed to load multimodal configuration: {last_error}")
+
+        if not self._provider or not self._model:
+            raise RuntimeError(
+                "No multimodal model configured. Please configure a provider "
+                "with a 'multimodal' model and valid API key in core/llm_adapter/config.yaml"
+            )
+
+    async def call(
+        self,
+        prompt: str,
+        image_base64: str,
+        provider: str | None = None,
+    ) -> MultimodalLLMResponse:
+        selected_provider = provider if provider else self._provider
+        selected_model = self._model
+
+        if provider and provider != self._provider:
+            try:
+                provider_config = self._config_manager.get_provider_config(provider)
+                multimodal_model = provider_config.models.multimodal
+                if not multimodal_model:
+                    raise RuntimeError(f"Provider '{provider}' has no multimodal model configured")
+                selected_model = multimodal_model
+            except Exception as e:
+                raise RuntimeError(f"Failed to get provider config: {e}")
+
+        try:
+            response_dict = await self._call_vision_api(
+                prompt=prompt,
+                image_base64=image_base64,
+                provider=selected_provider,
+                model=selected_model,
+            )
+        except Exception as e:
+            raise RuntimeError(f"Vision API call failed: {e}")
+
+        try:
+            parsed_json = self._parse_json_response(response_dict["raw_text"])
+        except ValueError as e:
+            raise RuntimeError(f"Failed to parse JSON from LLM response: {e}")
+
+        return MultimodalLLMResponse(
+            raw_text=response_dict["raw_text"],
+            parsed_json=parsed_json,
+            provider=response_dict["provider"],
+            model=response_dict["model"],
+            input_tokens=response_dict["input_tokens"],
+            output_tokens=response_dict["output_tokens"],
+            cost_usd=response_dict["cost_usd"],
+        )
+
+    async def _call_vision_api(
+        self,
+        prompt: str,
+        image_base64: str,
+        provider: str,
+        model: str,
+    ) -> dict:
+        provider_config = self._config_manager.get_provider_config(provider)
+        api_key = provider_config.api_key
+        base_url = provider_config.base_url
+
+        payload = {
+            "model": model,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": prompt,
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": f"data:image/jpeg;base64,{image_base64}"},
+                        }
+                    ],
+                },
+            ],
+            "max_tokens": 4096,
+            "temperature": 0.0,
+        }
+
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        }
+
+        try:
+            async with httpx.AsyncClient(timeout=120.0) as client:
+                response = await client.post(
+                    f"{base_url}/chat/completions",
+                    headers=headers,
+                    json=payload,
+                )
+                response.raise_for_status()
+                data = response.json()
+        except httpx.TimeoutException as e:
+            raise RuntimeError(f"Request timed out: {e}")
+        except httpx.HTTPStatusError as e:
+            error_detail = ""
+            try:
+                error_data = e.response.json()
+                error_detail = error_data.get("error", {}).get("message", e.response.text)
+            except Exception:
+                error_detail = e.response.text
+            raise RuntimeError(f"API error: {error_detail}")
+        except Exception as e:
+            raise RuntimeError(f"Unexpected error: {e}")
+
+        try:
+            raw_text = data["choices"][0]["message"]["content"]
+        except (KeyError, IndexError) as e:
+            raise RuntimeError(f"Unexpected response format: {e}")
+
+        usage = data.get("usage", {})
+        input_tokens = usage.get("prompt_tokens", 0)
+        output_tokens = usage.get("completion_tokens", 0)
+
+        cost_usd = usage.get("total_cost") or usage.get("cost")
+        if cost_usd is None:
+            try:
+                cost_usd = self._llm_adapter.billing.calculate_cost(
+                    provider=provider,
+                    model=model,
+                    input_tokens=input_tokens,
+                    output_tokens=output_tokens,
+                )
+            except Exception:
+                cost_usd = 0.0
+        else:
+            cost_usd = float(cost_usd)
+
+        return {
+            "raw_text": raw_text,
+            "provider": provider,
+            "model": model,
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "cost_usd": cost_usd,
+        }
+
+    def _parse_json_response(self, raw_text: str) -> dict:
+        try:
+            return json.loads(raw_text)
+        except json.JSONDecodeError:
+            pass
+
+        code_block_pattern = r"```(?:json)?\s*\n?(.*?)\n?```"
+        matches = re.findall(code_block_pattern, raw_text, re.DOTALL)
+        for match in matches:
+            try:
+                return json.loads(match.strip())
+            except json.JSONDecodeError:
+                continue
+
+        json_pattern = r"\{.*\}"
+        matches = re.findall(json_pattern, raw_text, re.DOTALL)
+        for match in matches:
+            try:
+                return json.loads(match)
+            except json.JSONDecodeError:
+                continue
+
+        raise ValueError(f"Could not extract valid JSON from response: {raw_text[:200]}...")
 
 
 

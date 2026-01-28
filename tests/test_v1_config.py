@@ -22,10 +22,6 @@ class TestScreenshotConfig:
         """Test that default values are set correctly."""
         config = ScreenshotConfig()
         
-        assert len(config.supported_apps) > 0
-        assert "whatsapp" in config.supported_apps
-        assert "telegram" in config.supported_apps
-        
         assert len(config.supported_languages) > 0
         assert "en" in config.supported_languages
         assert "zh" in config.supported_languages
@@ -37,14 +33,12 @@ class TestScreenshotConfig:
     def test_custom_values(self):
         """Test creating config with custom values."""
         config = ScreenshotConfig(
-            supported_apps=["whatsapp", "telegram"],
             supported_languages=["en", "zh"],
             default_conf_threshold=0.7,
             model_load_timeout=60.0,
             history_update_interval=20
         )
         
-        assert config.supported_apps == ["whatsapp", "telegram"]
         assert config.supported_languages == ["en", "zh"]
         assert config.default_conf_threshold == 0.7
         assert config.model_load_timeout == 60.0
@@ -122,9 +116,6 @@ class TestV1Config:
         yaml_content = """
 v1:
   screenshot:
-    supported_apps:
-      - whatsapp
-      - telegram
     supported_languages:
       - en
       - zh
@@ -141,7 +132,7 @@ v1:
         try:
             config = V1Config.from_yaml(temp_path)
             
-            assert config.screenshot.supported_apps == ["whatsapp", "telegram"]
+
             assert config.screenshot.supported_languages == ["en", "zh"]
             assert config.screenshot.default_conf_threshold == 0.6
             assert config.logging.level == "DEBUG"
@@ -153,8 +144,6 @@ v1:
         """Test loading from YAML with flat structure (no v1 key)."""
         yaml_content = """
 screenshot:
-  supported_apps:
-    - discord
   supported_languages:
     - es
 logging:
@@ -168,7 +157,6 @@ logging:
         try:
             config = V1Config.from_yaml(temp_path)
             
-            assert config.screenshot.supported_apps == ["discord"]
             assert config.screenshot.supported_languages == ["es"]
             assert config.logging.level == "WARNING"
         finally:
@@ -311,9 +299,7 @@ class TestConfigFromFile:
         
         config = V1Config.from_yaml("config.yaml")
         
-        # Verify expected apps are present
-        assert "whatsapp" in config.screenshot.supported_apps
-        assert "telegram" in config.screenshot.supported_apps
+
         
         # Verify expected languages are present
         assert "en" in config.screenshot.supported_languages

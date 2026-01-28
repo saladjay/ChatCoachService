@@ -93,6 +93,7 @@ class PersonaInferenceInput(BaseModel):
     conversation_id: str
     scene: str
     history_dialog: list[Message] = Field(default_factory=list)
+    persona: str = ""
 
 
 class ReplyGenerationInput(BaseModel):

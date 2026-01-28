@@ -27,8 +27,8 @@ from app.models.screenshot import (
 )
 from app.services.screenshot_parser import ScreenshotParserService
 from app.services.image_fetcher import ImageFetcher
-from app.services.prompt_builder import PromptBuilder
-from app.services.multimodal_llm_adapter import MultimodalLLMClient
+from app.services.prompt_manager import PromptManager
+from app.services.llm_adapter import MultimodalLLMClient
 from app.services.result_normalizer import ResultNormalizer
 from app.services.pipeline_integration import bubbles_to_dialogs, validate_layout
 from app.models.api import GenerateReplyRequest
@@ -51,8 +51,8 @@ def create_mock_service_with_bubbles(bubbles_data, image_width=750, image_height
         format="png"
     ))
     
-    mock_builder = Mock(spec=PromptBuilder)
-    mock_builder.build_prompts = Mock(return_value=("System prompt", "User prompt"))
+    mock_prompt_manager = Mock(spec=PromptManager)
+    mock_prompt_manager.get_active_prompt = Mock(return_value="System prompt")
     
     mock_llm = Mock(spec=MultimodalLLMClient)
     mock_llm.call = AsyncMock(return_value=Mock(
@@ -87,7 +87,7 @@ def create_mock_service_with_bubbles(bubbles_data, image_width=750, image_height
     
     return ScreenshotParserService(
         image_fetcher=mock_fetcher,
-        prompt_builder=mock_builder,
+        prompt_manager=mock_prompt_manager,
         llm_client=mock_llm,
         result_normalizer=mock_normalizer
     )
