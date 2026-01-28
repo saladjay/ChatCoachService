@@ -91,10 +91,10 @@ async def main():
     )
     
     print(f"✓ 用户ID: {user_id}")
-    print(f"✓ 角色人设: {profile.core_profile.explicit.role}")
-    print(f"✓ 回复风格: {profile.core_profile.explicit.style}")
-    print(f"✓ 禁止事项: {profile.core_profile.explicit.forbidden}")
-    print(f"✓ 亲密度: {profile.core_profile.explicit.intimacy}/100")
+    print(f"✓ 角色人设: {profile.explicit.role}")
+    print(f"✓ 回复风格: {profile.explicit.style}")
+    print(f"✓ 禁止事项: {profile.explicit.forbidden}")
+    print(f"✓ 亲密度: {profile.explicit.intimacy}/100")
     print()
     
     # ========== 步骤 3: 准备对话历史 ==========
