@@ -1517,9 +1517,14 @@ class UserProfilePersonaInferencer(BasePersonaInferencer):
             persona = json.loads(input.persona)
             list_tags = self.user_profile_service.manager.list_tags(input.user_id)
             print(f"用户 {input.user_id} 的标签: {list_tags}")
-            for tag in list_tags:
-                pass
-                
+            if len(list_tags) == 0:
+                quick_setup_profile = self.user_profile_service.manager.quick_setup_profile(input.user_id, age=int(persona['age']), 
+                gender=persona['gender'], role=persona.get('persona', []), style=persona.get('style', []), risk_level=persona.get('risk_level', []))
+                list_tags = self.user_profile_service.manager.list_tags(input.user_id)
+                print(f"用户 {input.user_id} 的标签: {list_tags}")
+            else:
+                self.user_profile_service.manager.update_profile(input.user_id, age=int(persona['age']), 
+                gender=persona['gender'], role=persona.get('persona', []), style=persona.get('style', []), risk_level=persona.get('risk_level', []))
         
         # 如果有对话历史，进行上下文分析
         if input.history_dialog:
@@ -1533,6 +1538,7 @@ class UserProfilePersonaInferencer(BasePersonaInferencer):
             # 这里可以根据 overlay 的分析结果进一步调整
         
         # 计算置信度
+        logger.info(f"calculate_confidence | input: {input}")
         confidence = self._calculate_confidence(input, profile)
 
         style = "理性"
