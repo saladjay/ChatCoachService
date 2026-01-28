@@ -12,6 +12,7 @@ import httpx
 from app.models.schemas import IntimacyCheckInput, IntimacyCheckResult
 from app.services.base import BaseIntimacyChecker
 from app.services.llm_adapter import BaseLLMAdapter, LLMCall
+from app.services.prompt_manager import PromptType, PromptVersion, get_prompt_manager
 
 
 class PromptLLMThirdPartyIntimacyAdapter:
@@ -27,25 +28,26 @@ class PromptLLMThirdPartyIntimacyAdapter:
         self._provider = provider
         self._model = model
         self.model_version = f"{provider}:{model}" if provider and model else "router"
+        self._prompt_manager = get_prompt_manager()
 
     async def get_intimacy_score(self, text: str, context: dict[str, Any]) -> float:
         profile = (context or {}).get("profile") or {}
         intimacy_stage = profile.get("intimacy_stage")
         persona = profile.get("persona")
 
-        prompt = (
-            "[PROMPT:intimacy_third_party_llm_v1]\n"
-            "你是一个对话内容审核员，负责评估回复内容在当前关系阶段下是否过度亲密/越界。\n"
-            "请结合关系阶段（intimacy_stage）判断该回复是否‘超过’当前阶段可接受的亲密程度。\n\n"
-            "关系阶段说明（intimacy_stage）：\n"
-            "1=陌生期(stranger)，2=熟人期(acquaintance)，3=朋友期(friend)，"
-            "4=亲密期(intimate)，5=羁绊期(bonded)。\n\n"
-            "输出要求：\n"
-            "- 只输出 JSON：{\"score\": <0~1>}\n"
-            "- score 表示‘越界风险’，0=完全合适，1=严重越界。\n\n"
-            f"persona: {persona}\n"
-            f"intimacy_stage: {intimacy_stage}\n"
-            f"text: {text}\n"
+        prompt_template = self._prompt_manager.get_active_prompt(
+            PromptType.INTIMACY_CHECK,
+        )
+        if not prompt_template:
+            prompt_template = self._prompt_manager.get_prompt_version(
+                PromptType.INTIMACY_CHECK,
+                PromptVersion.V1_ORIGINAL,
+            )
+        prompt_template = (prompt_template or "").strip()
+        prompt = prompt_template.format(
+            persona=persona,
+            intimacy_stage=intimacy_stage,
+            text=text,
         )
 
         llm_call = LLMCall(
@@ -60,11 +62,14 @@ class PromptLLMThirdPartyIntimacyAdapter:
 
         try:
             result = await self._llm_adapter.call(llm_call)
-            score = self._parse_score((result.text or "").strip())
-            if score is None:
-                raise ValueError("LLM response did not contain a valid score")
+            scores = self._parse_scores((result.text or "").strip())
+            if not scores:
+                raise ValueError("LLM response did not contain valid scores")
+            self._last_scores = scores
+            score = max(scores)
             return max(0.0, min(1.0, score))
         except Exception as e:
+            self._last_scores = []
             try:
                 from moderation_service.infrastructure.adapters import ThirdPartyAPIError  # type: ignore
 
@@ -72,9 +77,9 @@ class PromptLLMThirdPartyIntimacyAdapter:
             except ModuleNotFoundError:
                 raise
 
-    def _parse_score(self, text: str) -> float | None:
+    def _parse_scores(self, text: str) -> list[float]:
         if not text:
-            return None
+            return []
 
         if "```" in text:
             start = text.find("```") + 3
@@ -89,21 +94,34 @@ class PromptLLMThirdPartyIntimacyAdapter:
 
         try:
             parsed = json.loads(text)
+            raw_scores = parsed.get("scores")
+            if isinstance(raw_scores, list):
+                scores: list[float] = []
+                for item in raw_scores:
+                    if isinstance(item, (int, float)):
+                        scores.append(float(item))
+                    elif isinstance(item, str):
+                        try:
+                            scores.append(float(item.strip()))
+                        except Exception:
+                            continue
+                return scores
             raw = parsed.get("score")
             if isinstance(raw, (int, float)):
-                return float(raw)
+                return [float(raw)]
             if isinstance(raw, str):
-                return float(raw.strip())
+                return [float(raw.strip())]
         except Exception:
             pass
 
-        m = re.search(r"(-?\d+(?:\.\d+)?)", text)
-        if not m:
-            return None
-        try:
-            return float(m.group(1))
-        except Exception:
-            return None
+        matches = re.findall(r"(-?\d+(?:\.\d+)?)", text)
+        scores = []
+        for match in matches:
+            try:
+                scores.append(float(match))
+            except Exception:
+                continue
+        return scores
 
 
 class ModerationServiceIntimacyChecker(BaseIntimacyChecker):
@@ -131,6 +149,7 @@ class ModerationServiceIntimacyChecker(BaseIntimacyChecker):
         self._client = httpx.AsyncClient(timeout=self._timeout)
 
         self._library_service = None
+        self._third_party_adapter: PromptLLMThirdPartyIntimacyAdapter | None = None
         self._library_init_error: Exception | None = None
         if self._use_library:
             try:
@@ -150,13 +169,14 @@ class ModerationServiceIntimacyChecker(BaseIntimacyChecker):
 
         plugin_config = None
         if self._llm_adapter is not None:
+            self._third_party_adapter = PromptLLMThirdPartyIntimacyAdapter(
+                llm_adapter=self._llm_adapter,
+                provider=self._llm_provider,
+                model=self._llm_model,
+            )
             plugin_config = {
                 "intimacy": {
-                    "third_party_adapter": PromptLLMThirdPartyIntimacyAdapter(
-                        llm_adapter=self._llm_adapter,
-                        provider=self._llm_provider,
-                        model=self._llm_model,
-                    )
+                    "third_party_adapter": self._third_party_adapter
                 }
             }
 
@@ -197,25 +217,42 @@ class ModerationServiceIntimacyChecker(BaseIntimacyChecker):
             except Exception:
                 score = 0.0
 
+            scores = []
+            if self._third_party_adapter is not None:
+                scores = list(self._third_party_adapter._last_scores or [])
+
             passed = decision == "pass"
             reason = None
-            if not passed:
+            if scores:
+                stage_gap = self._scores_exceed_stage_gap(intimacy_stage, scores)
+                if stage_gap:
+                    passed = False
+                    reason = f"stage_gap_exceeded: {stage_gap}"
+
+            if not passed and reason is None:
                 reason = intimacy_result.get("reason")
                 if not isinstance(reason, str) or not reason.strip():
                     reason = f"moderation_decision={decision or 'unknown'}"
 
-            return IntimacyCheckResult(passed=passed, score=score, reason=reason)
+            return IntimacyCheckResult(
+                passed=passed,
+                score=score,
+                scores=scores,
+                reason=reason,
+            )
 
         except Exception as e:
             if self._fail_open:
                 return IntimacyCheckResult(
                     passed=True,
                     score=1.0,
+                    scores=[],
                     reason=f"moderation_service_unavailable: {type(e).__name__}",
                 )
             return IntimacyCheckResult(
                 passed=False,
                 score=0.0,
+                scores=[],
                 reason=f"moderation_service_error: {type(e).__name__}",
             )
 
@@ -254,3 +291,26 @@ class ModerationServiceIntimacyChecker(BaseIntimacyChecker):
         if intimacy_level_0_100 <= 80:
             return 4
         return 5
+
+    @staticmethod
+    def _score_to_stage(score: float) -> int:
+        if score < 0.2:
+            return 1
+        if score < 0.4:
+            return 2
+        if score < 0.6:
+            return 3
+        if score < 0.8:
+            return 4
+        return 5
+
+    def _scores_exceed_stage_gap(self, intimacy_stage: int, scores: list[float]) -> int | None:
+        if not scores:
+            return None
+        max_gap = None
+        for score in scores:
+            stage = self._score_to_stage(score)
+            gap = stage - intimacy_stage
+            if gap >= 1:
+                max_gap = max(max_gap or 0, gap)
+        return max_gap

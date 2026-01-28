@@ -176,6 +176,7 @@ class FallbackStrategy:
         return IntimacyCheckResult(
             passed=True,
             score=1.0,
+            scores=[],
             reason="Fallback response - always safe",
         )
     
