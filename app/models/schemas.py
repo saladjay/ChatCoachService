@@ -129,6 +129,9 @@ class IntimacyCheckInput(BaseModel):
     reply_text: str
     intimacy_level: int = Field(ge=0, le=100)
     persona: PersonaSnapshot
+    scene: SceneAnalysisResult
+    context: ContextResult
+    
 
 
 class IntimacyCheckResult(BaseModel):
