@@ -13,11 +13,11 @@ class LLMConfig(BaseSettings):
     
     model_config = SettingsConfigDict(env_prefix="LLM_")
     
-    default_provider: str = "openai"
-    default_model: str = "gpt-4"
-    fallback_model: str = "gpt-3.5-turbo"
-    cheap_model: str = "gpt-3.5-turbo"
-    premium_model: str = "gpt-4-turbo"
+    default_provider: str = "openrouter"
+    default_model: str = "google/gemini-2.5-flash"
+    fallback_model: str = "google/gemini-2.5-flash"
+    cheap_model: str = "google/gemini-2.5-flash"
+    premium_model: str = "google/gemini-2.5-flash"
 
 
 class OrchestratorConfig(BaseSettings):

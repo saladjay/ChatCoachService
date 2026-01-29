@@ -181,6 +181,7 @@ class ScreenshotParserService:
                 logger.info(
                     f"[{session_id}] Normalization successful: "
                     f"{len(parsed_data.bubbles)} bubbles extracted"
+                    f"{parsed_data.bubbles}"
                 )
             except ValueError as e:
                 logger.error(f"[{session_id}] Normalization failed: {e}")

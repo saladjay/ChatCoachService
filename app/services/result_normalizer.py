@@ -279,10 +279,10 @@ class ResultNormalizer:
             # Create BoundingBox
             bbox_dict = bubble_dict["bbox"]
             bbox = BoundingBox(
-                x1=float(bbox_dict["x1"]) / image_width,
-                y1=float(bbox_dict["y1"]) / image_height,
-                x2=float(bbox_dict["x2"]) / image_width,
-                y2=float(bbox_dict["y2"]) / image_height
+                x1=max(0, min(1, float(bbox_dict["x1"]) / image_width)),
+                y1=max(0, min(1, float(bbox_dict["y1"]) / image_height)),
+                x2=min(1, max(0, float(bbox_dict["x2"]) / image_width)),
+                y2=min(1, max(0, float(bbox_dict["y2"]) / image_height))
             )
             
             # Calculate center if not provided

@@ -12,6 +12,7 @@ from typing import Tuple
 from enum import Enum
 
 from user_profile.intimacy import intimacy_label_en, intimacy_label_zh
+from user_profile import get_age_segment_label, get_age_segment_code
 
 
 # Regex pattern to match prompt version identifier at the start of a prompt
@@ -187,6 +188,14 @@ def format_user_style_compact(profile_dict: dict, language: str = "en", drop_beh
                 parts.append(f"Intimacy: {label} ({intimacy_value}/100)")
             except Exception:
                 parts.append(f"Intimacy: {explicit['intimacy']}")
+        if 'age' in explicit:
+            age_code = get_age_segment_code(explicit['age'])
+            if age_code:
+                parts.append(f"Age: {age_code}")
+        if 'gender' in explicit:
+            gender = explicit['gender']
+            if gender:
+                parts.append(f"Gender: {gender}")
     
     # Top traits only (compact)
     if 'behavioral' in profile_dict and not drop_behavioral:

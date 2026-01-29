@@ -11,10 +11,10 @@ This module defines Pydantic models for the v1 API endpoints:
 """
 
 from datetime import datetime
+import hashlib
 from typing import Optional
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, ValidationInfo, field_validator
 from app.core.v1_config import get_v1_config
-
 
 class PredictRequest(BaseModel):
     """
@@ -79,6 +79,10 @@ class PredictRequest(BaseModel):
         False,
         description="场景分析的获取开关，默认 False，文字内容的场景和图片的场景一致"
     )
+    sign: str = Field(
+        ...,
+        description="签名"
+    )
     
     @field_validator("other_properties")
     @classmethod
@@ -118,6 +122,25 @@ class PredictRequest(BaseModel):
             raise ValueError(
                 f"language must be one of {allowed}, got '{v}'"
             )
+        return v
+
+
+    @field_validator("sign")
+    @classmethod
+    def validate_sign(cls, v: str, info: ValidationInfo) -> str:
+        session_id = (info.data or {}).get("session_id")
+        if not isinstance(session_id, str) or not session_id.strip():
+            raise ValueError("session_id is required to validate sign")
+
+        secret = getattr(get_v1_config(), "sign_secret", "")
+        if not isinstance(secret, str) or not secret:
+            raise ValueError("server sign_secret is not configured")
+
+        raw = f"{session_id}ChatCoach{secret}".encode("utf-8")
+        expected = hashlib.md5(raw).hexdigest()
+        if v != expected:
+            raise ValueError("invalid sign")
+
         return v
 
 
