@@ -822,6 +822,7 @@ class Orchestrator:
                 session_id=request.conversation_id,
                 category=category,
                 resource=request.resource,
+                scene=request.scene,
             )
             if cached_event:
                 payload = cached_event.get("payload")
@@ -840,6 +841,7 @@ class Orchestrator:
                 category=category,
                 resource=request.resource,
                 payload=payload,
+                scene=request.scene,
             )
         except Exception as exc:
             logger.warning("Cache append failed for category=%s: %s", category, exc)
