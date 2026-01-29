@@ -7,8 +7,9 @@ Output JSON (compact):
 {{
   "sum": "brief summary",
   "emo": "P|N|G|T",
-  "il": 0-101,
+  "il": "ST|AC|FR|IN|BO",
   "rf": []
 }}
 
-Codes: sum=summary, emo=emotion(P=positive,N=neutral,G=negative,T=tense), il=intimacy_level, rf=risk_flags
+Codes: sum=summary, emo=emotion(P=positive,N=neutral,G=negative,T=tense), rf=risk_flags
+il=intimacy_level(ST=stranger,AC=acquaintance,FR=friend,IN=intimate,BO=bonded)

@@ -135,7 +135,7 @@ class ContextBuilder(BaseContextBuilder):
             return ContextResult(
                 conversation_summary=self._fallback_summary(input.history_dialog),
                 emotion_state="neutral",
-                current_intimacy_level=3,
+                current_intimacy_level=50,
                 risk_flags=[],
                 conversation=input.history_dialog,
             )
