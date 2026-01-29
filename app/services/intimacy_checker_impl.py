@@ -13,7 +13,7 @@ from app.models.schemas import IntimacyCheckInput, IntimacyCheckResult
 from app.services.base import BaseIntimacyChecker
 from app.services.llm_adapter import BaseLLMAdapter, LLMCall
 from app.services.prompt_manager import PromptType, PromptVersion, get_prompt_manager
-
+from user_profile.intimacy import intimacy_label_en
 
 class PromptLLMThirdPartyIntimacyAdapter:
     provider = "app_llm_adapter"
@@ -57,7 +57,7 @@ class PromptLLMThirdPartyIntimacyAdapter:
             user_id="system",
             provider=self._provider,
             model=self._model,
-            max_tokens=80,
+            max_tokens=150,
         )
 
         try:
@@ -187,7 +187,7 @@ class ModerationServiceIntimacyChecker(BaseIntimacyChecker):
         )
 
     async def check(self, input: IntimacyCheckInput) -> IntimacyCheckResult:
-        intimacy_stage = self._convert_intimacy_to_stage(input.intimacy_level)
+        intimacy_stage = intimacy_label_en(input.intimacy_level)
 
         profile: dict[str, Any] = {
             "persona": input.persona.prompt,
