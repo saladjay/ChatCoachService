@@ -91,6 +91,11 @@ class V1Config(BaseSettings):
     
     # Screenshot processing configuration
     screenshot: ScreenshotConfig = Field(default_factory=ScreenshotConfig)
+
+    sign_secret: str = Field(
+        default="",
+        description="Secret used to validate request sign"
+    )
     
     # Logging configuration
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
@@ -127,10 +132,12 @@ class V1Config(BaseSettings):
         if config_data:
             screenshot_data = config_data.get('screenshot', {})
             logging_data = config_data.get('logging', {})
+            sign_secret = config_data.get('sign_secret', "")
             
             return cls(
                 screenshot=ScreenshotConfig(**screenshot_data) if screenshot_data else ScreenshotConfig(),
-                logging=LoggingConfig(**logging_data) if logging_data else LoggingConfig()
+                logging=LoggingConfig(**logging_data) if logging_data else LoggingConfig(),
+                sign_secret=sign_secret,
             )
         
         # Return default config (will still load from env vars)

@@ -344,8 +344,8 @@ class ServiceContainer:
             use_library=cfg.use_library,
             allow_http_fallback=cfg.allow_http_fallback,
             llm_adapter=llm_adapter,
-            llm_provider=llm_cfg.default_provider,
-            llm_model=llm_cfg.default_model,
+            llm_provider="openrouter",
+            llm_model="google/gemini-2.5-flash",
         )
 
     def get_context_builder(self) -> BaseContextBuilder:

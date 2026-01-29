@@ -18,8 +18,9 @@ from app.services.llm_adapter import LLMAdapterError, LLMCall, create_llm_adapte
 from app.core.v1_dependencies import (
     ScreenshotAnalysisServiceDep,
     OrchestratorDep,
-    MetricsCollectorDep,
-)
+    MetricsCollectorDep)
+from app.services.screenshot_processor import is_url
+
 from app.core.dependencies import SessionCategorizedCacheServiceDep, ScreenshotParserDep
 from app.models.screenshot import ParseScreenshotRequest
 
@@ -116,6 +117,7 @@ async def predict(
                 session_id=request.session_id,
                 category="scene_type",
                 resource="__scene__",
+                scene=request.scene,
             )
             if cached_scene_event:
                 cached_payload = cached_scene_event.get("payload")
@@ -129,6 +131,7 @@ async def predict(
                         cached_scene,
                         normalized_scene,
                     )
+                    
                     raise HTTPException(
                         status_code=400,
                         detail="Scene mismatch for session",
@@ -139,6 +142,7 @@ async def predict(
                     category="scene_type",
                     resource="__scene__",
                     payload={"scene": normalized_scene},
+                    scene=request.scene,
                 )
 
         # Handle text Q&A scenario (scene == 2)
@@ -177,11 +181,12 @@ async def predict(
         )
 
 
-async def _get_screenshot_analysis_from_cache(content_url, session_id, cache_service):
+async def _get_screenshot_analysis_from_cache(content_url, session_id, scene, cache_service: SessionCategorizedCacheServiceDep):
     cached_event = await cache_service.get_resource_category_last(
         session_id=session_id,
         category="image_result",
         resource=content_url,
+        scene=scene,
     )
     if cached_event:
         cached_payload = cached_event.get("payload")
@@ -191,40 +196,28 @@ async def _get_screenshot_analysis_from_cache(content_url, session_id, cache_ser
             return cached_result
     return None
 
-async def _get_screenshot_analysis_from_local_service(content_url, screenshot_service):
+async def _get_screenshot_analysis_from_local_service(content_url, screenshot_service: ScreenshotAnalysisServiceDep):
     try:
+        dialogs = []
         output_payload = await screenshot_service.analyze_screenshot(content_url)
         for dialog_data in output_payload.get("dialogs", []):
-            # Extract box coordinates (in pixels)
             box = dialog_data.get("box", [0, 0, 0, 0])
-            x1, y1, x2, y2 = box
+            speaker = dialog_data.get("speaker", "unknown")
+            from_user = (speaker == "user")
             
-            # Extract text content
-            text = dialog_data.get("text", "")
-            
-            # Extract confidence score
-            confidence = dialog_data.get("confidence", 0.0)
-            
-            # Create dialog object
-            dialog = Dialog(
-                box=[x1, y1, x2, y2],
-                text=text,
-                confidence=confidence
+            # Create DialogItem with normalized coordinates
+            dialog_item = DialogItem(
+                position=box,
+                text=dialog_data.get("text", ""),
+                speaker=speaker,
+                from_user=from_user,
             )
-            dialogs.append(dialog)
+            dialogs.append(dialog_item)
         
         # Create image result
         result = ImageResult(
-            content_url=content_url,
+            content=content_url,
             dialogs=dialogs
-        )
-        
-        # Cache the result
-        await cache_service.set_resource_category(
-            session_id=request.session_id,
-            category="image_result",
-            resource=content_url,
-            payload=result.model_dump(),
         )
         
         logger.info(f"Successfully analyzed screenshot: {content_url}")
@@ -237,80 +230,77 @@ async def _get_screenshot_analysis_from_local_service(content_url, screenshot_se
             detail=f"Failed to analyze screenshot: {str(e)}"
         )
 
-async def get_screenshot_analysis_result(content_url, cache_service, screenshot_service, screenshot_parser) -> ImageResult:
-    # TODO: Implement screenshot analysis result retrieval
-    pass
+async def _get_screenshot_analysis_from_cloud_service(content_url, screenshot_parser: ScreenshotParserDep):
+    try:
+        parser_request = ParseScreenshotRequest(image_url=content_url)
+        dialogs = []
+        parser_response = await screenshot_parser.parse_screenshot(parser_request)
+        if parser_response.code == 0 and parser_response.data is not None:
+            for bubble in parser_response.data.bubbles:
+                dialog_item = DialogItem(
+                    position=[
+                        bubble.bbox.x1,
+                        bubble.bbox.y1,
+                        bubble.bbox.x2,
+                        bubble.bbox.y2,
+                    ],
+                    text=bubble.text,
+                    speaker=bubble.sender,
+                    from_user=(bubble.sender == "user"),
+                )
+                dialogs.append(dialog_item)
+        else:
+            raise Exception("Failed to parse screenshot")
+        
+        # Create image result
+        result = ImageResult(
+            content=content_url,
+            dialogs=dialogs
+        )
+        return result
+    except Exception as e:
+        logger.error(f"Error analyzing screenshot {content_url}: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to analyze screenshot: {str(e)}"
+        )
+
+async def get_screenshot_analysis_result(
+    content_url, 
+    session_id,
+    scene,
+    cache_service: SessionCategorizedCacheServiceDep, 
+    screenshot_service: ScreenshotAnalysisServiceDep,
+    screenshot_parser: ScreenshotParserDep,
+    ) -> ImageResult:
     try:
         logger.info(f"Processing content: {content_url}")
-        cached_event = await cache_service.get_resource_category_last(
-            session_id=request.session_id,
-            category="image_result",
-            resource=content_url,
+        image_result = await _get_screenshot_analysis_from_cache(
+            content_url,
+            session_id,
+            cache_service=cache_service,
+            scene=scene,
         )
-        if cached_event:
-            cached_payload = cached_event.get("payload")
-            if isinstance(cached_payload, dict):
-                cached_result = ImageResult(**cached_payload)
-                logger.info(f"Using cached result for {content_url}")
-                return cached_result
+        if image_result is not None:
+            return image_result
         else:
-            dialogs = []
             try:
-                # raise Exception("Test exception")
-                output_payload = await screenshot_service.analyze_screenshot(content_url)
-                for dialog_data in output_payload.get("dialogs", []):
-                    # Extract box coordinates (in pixels)
-                    box = dialog_data.get("box", [0, 0, 0, 0])
-                    
-                    # Get speaker and determine from_user
-                    speaker = dialog_data.get("speaker", "unknown")
-                    from_user = (speaker == "user")
-                    
-                    # Create DialogItem with normalized coordinates
-                    dialog_item = DialogItem(
-                        position=box,
-                        text=dialog_data.get("text", ""),
-                        speaker=speaker,
-                        from_user=from_user,
-                    )
-                    dialogs.append(dialog_item)
-                
-                # Get scenario from output_payload or use default
-                scenario = output_payload.get("scenario", "")
+                image_result = await _get_screenshot_analysis_from_local_service(content_url, screenshot_service)
             except Exception as e:
-                logger.error(f"Error analyzing screenshot {content_url}: {e}")
-                if screenshot_parser is not None:
-                    parser_request = ParseScreenshotRequest(
-                        image_url=content_url,
-                        session_id=request.session_id,
-                    )
-                    parser_response = await screenshot_parser.parse_screenshot(parser_request)
-                    if parser_response.code == 0 and parser_response.data is not None:
-                        for bubble in parser_response.data.bubbles:
-                            dialog_item = DialogItem(
-                                position=[
-                                    bubble.bbox.x1,
-                                    bubble.bbox.y1,
-                                    bubble.bbox.x2,
-                                    bubble.bbox.y2,
-                                ],
-                                text=bubble.text,
-                                speaker=bubble.sender,
-                                from_user=(bubble.sender == "user"),
-                            )
-                            dialogs.append(dialog_item)
-                    else:
-                        raise
-                else:
-                    raise
-            
-            image_result = ImageResult(
-                content=content_url,
-                dialogs=dialogs,
-                scenario=scenario
+                image_result = await _get_screenshot_analysis_from_cloud_service(content_url, screenshot_parser)
+        if image_result:
+            return image_result
+        else:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to analyze screenshot: {str(e)}"
             )
-    except Exceptoin as e:
-        pass
+    except Exception as e:
+        logger.error(f"Error analyzing screenshot {content_url}: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to analyze screenshot: {str(e)}"
+        )
 
 async def handle_image(
     request: PredictRequest,
@@ -322,98 +312,57 @@ async def handle_image(
     cache_service: SessionCategorizedCacheServiceDep,
 ) -> PredictResponse:
     # Process each content item (image URL)
-    results: list[ImageResult] = []
-    all_dialogs = []
-        
+
+    results_dict = {}
     for content_url in request.content:
         try:
             logger.info(f"Processing content: {content_url}")
-            cached_event = await cache_service.get_resource_category_last(
-                session_id=request.session_id,
-                category="image_result",
-                resource=content_url,
-            )
-            if cached_event:
-                cached_payload = cached_event.get("payload")
-                if isinstance(cached_payload, dict):
-                    cached_result = ImageResult(**cached_payload)
-                    logger.info(f"Using cached result for {content_url}")
-                    results.append(cached_result)
-                    all_dialogs.append(cached_result.dialogs)
-                    continue
-
-            # Use analyze_chat_image to process screenshot
-            dialogs = []
-            scenario = ""
-            try:
-                # raise Exception("Test exception")
-                output_payload = await screenshot_service.analyze_screenshot(content_url)
-                for dialog_data in output_payload.get("dialogs", []):
-                    # Extract box coordinates (in pixels)
-                    box = dialog_data.get("box", [0, 0, 0, 0])
-                    
-                    # Get speaker and determine from_user
-                    speaker = dialog_data.get("speaker", "unknown")
-                    from_user = (speaker == "user")
-                    
-                    # Create DialogItem with normalized coordinates
-                    dialog_item = DialogItem(
-                        position=box,
-                        text=dialog_data.get("text", ""),
-                        speaker=speaker,
-                        from_user=from_user,
-                    )
-                    dialogs.append(dialog_item)
-                
-                # Get scenario from output_payload or use default
-                scenario = output_payload.get("scenario", "")
-            except Exception as e:
-                logger.error(f"Error analyzing screenshot {content_url}: {e}")
-                if screenshot_parser is not None:
-                    parser_request = ParseScreenshotRequest(
-                        image_url=content_url,
-                        session_id=request.session_id,
-                    )
-                    parser_response = await screenshot_parser.parse_screenshot(parser_request)
-                    if parser_response.code == 0 and parser_response.data is not None:
-                        for bubble in parser_response.data.bubbles:
-                            dialog_item = DialogItem(
-                                position=[
-                                    bubble.bbox.x1,
-                                    bubble.bbox.y1,
-                                    bubble.bbox.x2,
-                                    bubble.bbox.y2,
-                                ],
-                                text=bubble.text,
-                                speaker=bubble.sender,
-                                from_user=(bubble.sender == "user"),
+            if not is_url(content_url):
+                results_dict[content_url] = [
+                    "text",
+                    ImageResult(
+                        content=content_url,
+                        dialogs=[
+                            DialogItem(
+                                position=[0.0, 0.0, 0.0, 0.0],
+                                text=content_url,
+                                speaker="",
+                                from_user=False,
                             )
-                            dialogs.append(dialog_item)
-                    else:
-                        raise
-                else:
-                    raise
-            
-            image_result = ImageResult(
-                content=content_url,
-                dialogs=dialogs,
-                scenario=scenario
+                        ],
+                    ),
+                ]
+                continue
+            image_result = await get_screenshot_analysis_result(
+                content_url,
+                request.session_id,
+                request.scene,
+                cache_service,
+                screenshot_service,
+                screenshot_parser,
             )
-
-            results.append(image_result)
-            logger.info(f"Content processed successfully: {len(dialogs)} dialogs extracted")
-            all_dialogs.append(dialogs)
+            logger.info(f"Image result: {type(image_result)}")
+            logger.info(f"Content processed successfully: {len(image_result.dialogs)} dialogs extracted")
+     
             await cache_service.append_event(
                 session_id=request.session_id,
                 category="image_result",
                 resource=content_url,
                 payload=image_result.model_dump(mode="json"),
+                scene=request.scene,
             )
+            results_dict[content_url] = ["image", image_result]
         except Exception as e:
             error_msg = str(e)
             
             # Determine error type and handle accordingly
-            if "not available" in error_msg.lower() or "model" in error_msg.lower():
+            if (
+                isinstance(e, LLMAdapterError)
+                or "model unavailable" in error_msg.lower()
+                or "provider not configured" in error_msg.lower()
+                or "all providers failed" in error_msg.lower()
+                or "not available" in error_msg.lower()
+            ):
                 # Requirement 7.1: Handle model unavailable errors (HTTP 401)
                 logger.error(f"Model unavailable for {content_url}: {e}")
                 metrics.record_request("predict", 401, int((time.time() - start_time) * 1000))
@@ -460,12 +409,25 @@ async def handle_image(
     recommended_scenario = None
     recommended_strategies = None
 
+    text_dialogs = []
+    talker_nickname = ""
+    current_content_keys = []
+    current_dialogs = []
+    for key, values in results_dict.items():
+        if values[0] == "image":
+            current_dialogs = current_dialogs + values[1].dialogs
+            current_content_keys.append(key)
+        elif values[0] == "text":
+            current_dialogs = current_dialogs + values[1].dialogs
+            current_content_keys.append(key)
+    results = []
     # If only scene analysis is requested
-    if request.scene_analysis and not request.reply and all_dialogs:
+    if request.scene_analysis and not request.reply and results_dict:
         try:
             logger.info("Scene analysis requested, calling Orchestrator")
-            
-            for url_index, dialog in enumerate(all_dialogs):
+
+            for url_index, _image_result in enumerate(list(results_dict.values())):
+                dialog = _image_result[1].dialogs
                 logger.info(f"Dialog: {dialog}")
                 # Requirement 9.2: Format dialogs as conversation history
                 conversation = []
@@ -488,14 +450,16 @@ async def handle_image(
                         dialogs=conversation,
                         language=request.language,
                         quality="normal",
-                        persona=request.other_properties
+                        persona=request.other_properties,
+                        scene=request.scene,
                     )
 
                     scenario_analysis_result = await orchestrator.scenario_analysis(orchestrator_request)
                     # current_scenario: str = ""  # 当前情景（安全/低风险策略|平衡/中风险策略|高风险/高回报策略|关系修复策略|禁止的策略）
                     # recommended_scenario: str = ""  # 推荐情景
                     # recommended_strategies: list[str] = Field(default_factory=list)  # 推荐的对话策略（3个策略代码）
-                    results[url_index].scenario = f"current scenario:{scenario_analysis_result.current_scenario}, \
+                    results.append(_image_result[1])
+                    results[-1].scenario = f"current scenario:{scenario_analysis_result.current_scenario}, \
                     recommended scenario:{scenario_analysis_result.recommended_scenario}, \
                     recommended strategies:{scenario_analysis_result.recommended_strategies}"
                 else:
@@ -507,11 +471,12 @@ async def handle_image(
             # Continue without replies - don't fail the entire request
 
     # If reply generation is requested, call Orchestrator
-    if request.reply and all_dialogs:
+    if request.reply and results_dict:
         try:
             logger.info("Reply generation requested, calling Orchestrator")
             
-            for url_index, dialog in enumerate(all_dialogs):
+            for url_index, _image_result in enumerate(list(results_dict.values())):
+                dialog = _image_result[1].dialogs
                 logger.info(f"Dialog: {dialog}")
                 # Requirement 9.2: Format dialogs as conversation history
                 conversation = []
@@ -534,7 +499,8 @@ async def handle_image(
                         dialogs=conversation,
                         language=request.language,
                         quality="normal",
-                        persona=request.other_properties
+                        persona=request.other_properties,
+                        scene=request.scene,
                     )
 
                     orchestrator_response = await orchestrator.generate_reply(orchestrator_request)

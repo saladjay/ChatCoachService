@@ -30,7 +30,7 @@ try:
     from screenshotanalysis import ChatLayoutAnalyzer, ChatTextRecognition, ChatMessageProcessor
     from screenshotanalysis.nickname_extractor import extract_nicknames_smart
     from screenshotanalysis.utils import ImageLoader
-
+    
     SCREENSHOT_ANALYSIS_AVAILABLE = True
     logger.info("screenshotanalysis library imported successfully")
 except ImportError as e:
@@ -41,6 +41,10 @@ except ImportError as e:
     ChatMessageProcessor = None
     extract_nicknames_smart = None
     ImageLoader = None
+
+
+def is_url(content:str) -> bool:
+    return ImageLoader._is_url(content)
 
 
 class ModelUnavailableError(Exception):
