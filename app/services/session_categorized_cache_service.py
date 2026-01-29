@@ -122,7 +122,8 @@ class SessionCategorizedCacheService:
 
         logger.info("SessionCategorizedCacheService stopped")
 
-    async def append_event(self, *, session_id: str, category: str, resource: str, payload: dict[str, Any]) -> None:
+    async def append_event(self, *, session_id: str, category: str, resource: str, payload: dict[str, Any], scene:str="") -> None:
+        session_id = f"{session_id}_{scene}"
         self._metrics["append_event_calls"] += 1
         redis_client = self._require_redis()
         now = int(time.time())
@@ -168,7 +169,8 @@ class SessionCategorizedCacheService:
             payload_str=json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
         )
 
-    async def get_timeline(self, *, session_id: str, category: str) -> list[dict[str, Any]]:
+    async def get_timeline(self, *, session_id: str, category: str, scene:str="") -> list[dict[str, Any]]:
+        session_id = f"{session_id}_{scene}"
         self._metrics["get_timeline_calls"] += 1
         redis_client = self._require_redis()
         timeline_key = self._key_timeline(session_id, category)
@@ -190,7 +192,8 @@ class SessionCategorizedCacheService:
             result.append(json.loads(v))
         return result
 
-    async def get_resource_categories(self, *, session_id: str, resource: str) -> dict[str, dict[str, Any]]:
+    async def get_resource_categories(self, *, session_id: str, resource: str, scene:str="") -> dict[str, dict[str, Any]]:
+        session_id = f"{session_id}_{scene}"
         self._metrics["get_resource_categories_calls"] += 1
         redis_client = self._require_redis()
         now = int(time.time())
@@ -217,8 +220,9 @@ class SessionCategorizedCacheService:
         return result
 
     async def get_resource_category_last(
-        self, *, session_id: str, category: str, resource: str
+        self, *, session_id: str, category: str, resource: str, scene:str=""
     ) -> dict[str, Any] | None:
+        session_id = f"{session_id}_{scene}"
         self._metrics["get_resource_category_last_calls"] += 1
         redis_client = self._require_redis()
         now = int(time.time())
@@ -244,7 +248,8 @@ class SessionCategorizedCacheService:
             return None
         return json.loads(value)
 
-    async def list_resources(self, *, session_id: str, limit: int = 100) -> list[str]:
+    async def list_resources(self, *, session_id: str, limit: int = 100, scene:str="") -> list[str]:
+        session_id = f"{session_id}_{scene}"
         self._metrics["list_resources_calls"] += 1
         redis_client = self._require_redis()
         now = int(time.time())

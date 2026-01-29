@@ -327,6 +327,18 @@
       "action": "activate",
       "timestamp": "2026-01-27T23:38:06.738781",
       "author": "cli_user"
+    },
+    {
+      "prompt_id": "context_summary_v3.1-compact_v2",
+      "action": "activate",
+      "timestamp": "2026-01-28T21:00:30.150092",
+      "author": "cli_user"
+    },
+    {
+      "prompt_id": "context_summary_v3.0-compact",
+      "action": "activate",
+      "timestamp": "2026-01-29T17:24:16.529975",
+      "author": "cli_user"
     }
   ]
 }
