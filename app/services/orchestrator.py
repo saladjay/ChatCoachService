@@ -195,6 +195,102 @@ class Orchestrator:
                 original_error=e,
             ) from e
 
+    async def prepare_generate_reply(
+        self,
+        request: GenerateReplyRequest
+    ) -> GenerateReplyResponse:
+        # Check quota before starting
+        if not await self.billing_service.check_quota(request.user_id):
+            logger.warning(f"Quota exceeded for user {request.user_id}")
+            raise QuotaExceededError(
+                message=f"User {request.user_id} has exceeded their quota",
+                user_id=request.user_id,
+            )
+        
+        # Initialize execution context
+        exec_ctx = ExecutionContext(
+            user_id=request.user_id,
+            conversation_id=request.conversation_id,
+            quality=request.quality,
+        )
+        
+        try:
+            # Step 1: Build context
+            cached_context = await self._get_cached_payload(request, "context_analysis")
+            if cached_context:
+                context = ContextResult(**cached_context)
+            else:
+                context = await self._execute_step(
+                    exec_ctx,
+                    "context_builder",
+                    self._build_context,
+                    request,
+                )
+                await self._append_cache_event(request, "context_analysis", context.model_dump(mode="json"))
+            
+            # Step 2: Analyze scene (传递 context 以获取当前亲密度)
+            cached_scene = await self._get_cached_payload(request, "scene_analysis")
+            if cached_scene:
+                scene = SceneAnalysisResult(**cached_scene)
+            else:
+                scene = await self._execute_step(
+                    exec_ctx,
+                    "scene_analysis",
+                    self._analyze_scene,
+                    request,
+                    context,  # 传递 context
+                )
+                await self._append_cache_event(request, "scene_analysis", scene.model_dump(mode="json"))
+            
+            # Step 3: Infer persona
+            cached_persona = await self._get_cached_payload(request, "persona_analysis")
+            if cached_persona:
+                persona = PersonaSnapshot(**cached_persona)
+            else:
+                persona = await self._execute_step(
+                    exec_ctx,
+                    "persona_inference",
+                    self._infer_persona,
+                    request,
+                    scene,
+                )
+                await self._append_cache_event(request, "persona_analysis", persona.model_dump(mode="json"))
+            
+            # Phase 2: Step 3.5: Plan strategies (optional, if strategy_planner available)
+            strategy_plan = None
+            if self.strategy_planner:
+                cached_strategy = await self._get_cached_payload(request, "strategy_plan")
+                if cached_strategy:
+                    from app.services.strategy_planner import StrategyPlanOutput
+
+                    strategy_plan = StrategyPlanOutput(**cached_strategy)
+                else:
+                    strategy_plan = await self._execute_step(
+                        exec_ctx,
+                        "strategy_planning",
+                        self._plan_strategies,
+                        context,
+                        scene,
+                    )
+                    await self._append_cache_event(request, "strategy_plan", asdict(strategy_plan))
+
+            # Record all billing records
+            for record in exec_ctx.billing_records:
+                await self.billing_service.record_call(record)
+
+        except ContextBuildError as e:
+            # Fallback for context build failure (Requirement 4.4)
+            logger.error(f"Context build failed: {e}")
+            return self._create_fallback_response(exec_ctx, scene=None)
+            
+        except Exception as e:
+            # Log error and return friendly response (Requirement 4.5)
+            logger.exception(f"Orchestration error: {e}")
+            raise OrchestrationError(
+                message="An error occurred during generation",
+                original_error=e,
+            ) from e
+
     async def generate_reply(
         self, 
         request: GenerateReplyRequest
@@ -274,16 +370,18 @@ class Orchestrator:
                 await self._append_cache_event(request, "persona_analysis", persona.model_dump(mode="json"))
             
             # Phase 2: Step 3.5: Plan strategies (optional, if strategy_planner available)
-            strategy_plan = None
-            if self.strategy_planner:
-                cached_strategy = await self._get_cached_payload(request, "strategy_plan")
-                if cached_strategy:
-                    from app.services.strategy_planner import StrategyPlanOutput
-
-                    strategy_plan = StrategyPlanOutput(**cached_strategy)
-                else:
-                    strategy_plan = await self._execute_step(
-                        exec_ctx,
+            if settings.no_strategy_planner:
+                strategy_plan = None
+            else:
+                strategy_plan = None
+                if self.strategy_planner:
+                    cached_strategy = await self._get_cached_payload(request, "strategy_plan")
+                    if cached_strategy:
+                        from app.services.strategy_planner import StrategyPlanOutput
+                        strategy_plan = StrategyPlanOutput(**cached_strategy)
+                    else:
+                        strategy_plan = await self._execute_step(
+                            exec_ctx,
                         "strategy_planning",
                         self._plan_strategies,
                         context,
@@ -612,6 +710,51 @@ class Orchestrator:
         quality = self._get_effective_quality(exec_ctx, request.quality)
         last_reply_result = None
         last_intimacy_result = None
+
+        if self.cache_service is not None:
+            try:
+                timeline = await self.cache_service.get_timeline(
+                    session_id=request.conversation_id,
+                    category="context_analysis",
+                    scene=request.scene,
+                )
+                payloads = [event.get("payload") for event in timeline if isinstance(event, dict)]
+                contexts = [ContextResult(**payload) for payload in payloads if isinstance(payload, dict)]
+
+                if contexts:
+                    summary_parts: list[str] = []
+                    seen_summaries: set[str] = set()
+                    risk_flags: list[str] = []
+                    seen_flags: set[str] = set()
+                    conversation: list[Message] = []
+                    history_parts: list[str] = []
+
+                    for ctx in contexts:
+                        if isinstance(ctx.conversation_summary, str) and ctx.conversation_summary and ctx.conversation_summary not in seen_summaries:
+                            summary_parts.append(ctx.conversation_summary)
+                            seen_summaries.add(ctx.conversation_summary)
+
+                        for flag in (ctx.risk_flags or []):
+                            if flag not in seen_flags:
+                                risk_flags.append(flag)
+                                seen_flags.add(flag)
+
+                        if isinstance(ctx.history_conversation, str) and ctx.history_conversation:
+                            history_parts.append(ctx.history_conversation)
+
+                    latest = contexts[-1]
+                    history_context = ContextResult(
+                        conversation_summary="\n".join(summary_parts) if summary_parts else latest.conversation_summary,
+                        emotion_state=next((c.emotion_state for c in reversed(contexts) if isinstance(c.emotion_state, str) and c.emotion_state), latest.emotion_state),
+                        current_intimacy_level=latest.current_intimacy_level,
+                        risk_flags=risk_flags,
+                        conversation=context.conversation,
+                        history_conversation="\n".join(history_parts),
+                    )
+                    context = history_context
+            except Exception as exc:
+                logger.warning("Failed to aggregate cached context for session %s: %s", request.conversation_id, exc)
+
         
         for attempt in range(self.config.max_retries):
             try:
@@ -813,13 +956,13 @@ class Orchestrator:
         return messages
 
     async def _get_cached_payload(self, request: GenerateReplyRequest, category: str) -> dict | None:
-        if self.cache_service is None or not request.resource or request.force_regenerate:
+        if self.cache_service is None or not request.resource or request.force_regenerate or request.resources:
             return None
         try:
             cached_event = await self.cache_service.get_resource_category_last(
                 session_id=request.conversation_id,
                 category=category,
-                resource=request.resource,
+                resource=request.resource or request.resources[0],
                 scene=request.scene,
             )
             if cached_event:
@@ -831,15 +974,22 @@ class Orchestrator:
         return None
 
     async def _append_cache_event(self, request: GenerateReplyRequest, category: str, payload: dict) -> None:
-        if self.cache_service is None or not request.resource:
+        if self.cache_service is None or (not request.resource and not request.resources):
             return
         try:
-            await self.cache_service.append_event(
-                session_id=request.conversation_id,
-                category=category,
-                resource=request.resource,
-                payload=payload,
-                scene=request.scene,
-            )
+            resources = []
+            if request.resources:
+                resources.extend(request.resources)
+            if request.resource:
+                resources.append(request.resource)
+
+            for r in set(resources):
+                await self.cache_service.append_event(
+                    session_id=request.conversation_id,
+                    category=category,
+                    resource=r,
+                    payload=payload,
+                    scene=request.scene,
+                )
         except Exception as exc:
             logger.warning("Cache append failed for category=%s: %s", category, exc)

@@ -32,6 +32,9 @@ class GenerateReplyRequest(BaseModel):
     resource: Optional[str] = Field(
         default=None, description="Resource identifier (image_url or text content)"
     )
+    resources: Optional[List[str]] = Field(
+        default=None, description="Resources identifier (image_url or text content)"
+    )
     language: str = Field(default="en", description="Language code (en/ar/pt/es/zh-CN)")
     quality: Literal["cheap", "normal", "premium"] = Field(
         default="normal", description="Quality tier for LLM selection"

@@ -76,8 +76,8 @@ class PredictRequest(BaseModel):
         description="建议回复获取开关，是否获取建议回复（可选，默认 False）"
     )
     scene_analysis: bool = Field(
-        False,
-        description="场景分析的获取开关，默认 False，文字内容的场景和图片的场景一致"
+        True,
+        description="场景分析的获取开关，默认 True，文字内容的场景和图片的场景一致"
     )
     sign: str = Field(
         ...,

@@ -7,6 +7,8 @@ Requirements: 4.1, 4.2, 4.3, 4.4, 4.5, 4.6, 4.7, 4.8, 4.9, 4.10, 4.11, 4.12
 """
 
 import logging
+import os
+import uuid
 from typing import Optional, Tuple, List
 import numpy as np
 from PIL import Image
@@ -30,7 +32,8 @@ try:
     from screenshotanalysis import ChatLayoutAnalyzer, ChatTextRecognition, ChatMessageProcessor
     from screenshotanalysis.nickname_extractor import extract_nicknames_smart
     from screenshotanalysis.utils import ImageLoader
-    
+    from screenshotanalysis.dialog_pipeline2 import analyze_chat_image
+    from screenshotanalysis import en_rec, layout_det, text_det
     SCREENSHOT_ANALYSIS_AVAILABLE = True
     logger.info("screenshotanalysis library imported successfully")
 except ImportError as e:
@@ -41,6 +44,10 @@ except ImportError as e:
     ChatMessageProcessor = None
     extract_nicknames_smart = None
     ImageLoader = None
+    analyze_chat_image = None
+    en_rec = None
+    layout_det = None
+    text_det = None
 
 
 def is_url(content:str) -> bool:
@@ -123,22 +130,34 @@ class ScreenshotProcessor:
             
             # Load text detection model
             logger.info("Loading text detection model (PP-OCRv5_server_det)...")
-            self._text_det_analyzer = AnalysisCore.text_det
-            if self._text_det_analyzer.model is None:
+            if text_det is not None:
+                self._text_det_analyzer = text_det
+                if getattr(self._text_det_analyzer, "model", None) is None:
+                    self._text_det_analyzer.load_model()
+            else:
+                self._text_det_analyzer = ChatLayoutAnalyzer(model_name="PP-OCRv5_server_det")
                 self._text_det_analyzer.load_model()
             logger.info("Text detection model loaded")
             
             # Load layout detection model
             logger.info("Loading layout detection model (PP-DocLayoutV2)...")
-            self._layout_det_analyzer = AnalysisCore.layout_det
-            if self._layout_det_analyzer.model is None:
+            if layout_det is not None:
+                self._layout_det_analyzer = layout_det
+                if getattr(self._layout_det_analyzer, "model", None) is None:
+                    self._layout_det_analyzer.load_model()
+            else:
+                self._layout_det_analyzer = ChatLayoutAnalyzer(model_name="PP-DocLayoutV2")
                 self._layout_det_analyzer.load_model()
             logger.info("Layout detection model loaded")
             
             # Load text recognition model
             logger.info("Loading text recognition model (PP-OCRv5_server_rec)...")
-            self._text_rec_model = AnalysisCore.en_rec
-            if self._text_rec_model.model is None:
+            if en_rec is not None:
+                self._text_rec_model = en_rec
+                if getattr(self._text_rec_model, "model", None) is None:
+                    self._text_rec_model.load_model()
+            else:
+                self._text_rec_model = ChatTextRecognition(model_name="PP-OCRv5_server_rec", lang="en")
                 self._text_rec_model.load_model()
             logger.info("Text recognition model loaded")
             
@@ -273,7 +292,45 @@ class ScreenshotProcessor:
         # Load models if not already loaded
         self._load_models()
         
-        # Load image
+        if analyze_chat_image is not None:
+            try:
+                dump_dir = os.getenv("V1_SCREENSHOT__DUMP_OUTPUT_DIR")
+                output_path = None
+                if isinstance(dump_dir, str) and dump_dir.strip():
+                    os.makedirs(dump_dir, exist_ok=True)
+                    output_path = os.path.join(dump_dir, f"dialog_{uuid.uuid4().hex}.json")
+
+                output_payload, _ = analyze_chat_image(
+                    image_path=image_url,
+                    output_path=output_path,
+                    draw_output_path=None,
+                    text_det_analyzer=self._text_det_analyzer,
+                    layout_det_analyzer=self._layout_det_analyzer,
+                    text_rec=self._text_rec_model,
+                    processor=self._message_processor,
+                    speaker_map={"user": "self", "other": "other", "unknown": "unknown", None: "unknown"},
+                    track_model_calls=False,
+                )
+
+                dialogs: list[DialogItem] = []
+                for dialog_data in output_payload.get("dialogs", []):
+                    dialogs.append(
+                        DialogItem(
+                            position=dialog_data.get("box", [0, 0, 0, 0]),
+                            text=dialog_data.get("text", ""),
+                            speaker=dialog_data.get("speaker", "unknown"),
+                        )
+                    )
+
+                return ImageResult(
+                    url=image_url,
+                    dialogs=dialogs,
+                )
+            except Exception as e:
+                logger.error(f"dialog_pipeline2 analyze_chat_image failed: {e}", exc_info=True)
+                raise InferenceError(f"dialog_pipeline2 failed: {str(e)}")
+
+        # Fallback to legacy pipeline
         image = await self._load_image_from_url(image_url)
         
         # Perform text and layout detection

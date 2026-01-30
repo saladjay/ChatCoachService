@@ -99,7 +99,7 @@ class ScreenshotAnalysisService:
             layout_det_analyzer=self._layout_det_analyzer,
             text_rec=self._text_rec,
             processor=self._processor,
-            speaker_map={"A": "other", "B": "self", None: "self"},
+            speaker_map=None,
             track_model_calls=False,
         )
         
