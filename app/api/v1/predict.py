@@ -203,10 +203,10 @@ async def _get_screenshot_analysis_from_cache(content_url, session_id, scene, ca
             return cached_result
     return None
 
-async def _get_screenshot_analysis_from_local_service(content_url, screenshot_service: ScreenshotAnalysisServiceDep):
+async def _get_screenshot_analysis_from_local_service(content_url, lang, screenshot_service: ScreenshotAnalysisServiceDep):
     try:
         dialogs = []
-        output_payload = await screenshot_service.analyze_screenshot(content_url)
+        output_payload = await screenshot_service.analyze_screenshot(content_url, lang)
         logger.info(f"dialogs from screenshot analysis: {output_payload.get('dialogs', [])}")
         for dialog_data in output_payload.get("dialogs", []):
             box = dialog_data.get("box", [0, 0, 0, 0])
@@ -275,6 +275,7 @@ async def _get_screenshot_analysis_from_cloud_service(content_url, screenshot_pa
 
 async def get_screenshot_analysis_result(
     content_url, 
+    lang,
     session_id,
     scene,
     cache_service: SessionCategorizedCacheServiceDep, 
@@ -293,7 +294,7 @@ async def get_screenshot_analysis_result(
             return image_result
         else:
             try:
-                image_result = await _get_screenshot_analysis_from_local_service(content_url, screenshot_service)
+                image_result = await _get_screenshot_analysis_from_local_service(content_url, lang, screenshot_service)
             except Exception:
                 image_result = await _get_screenshot_analysis_from_cloud_service(content_url, screenshot_parser)
         if image_result:
@@ -462,6 +463,7 @@ async def handle_image(
                 continue
             image_result = await get_screenshot_analysis_result(
                 content_url,
+                request.language,
                 request.session_id,
                 request.scene,
                 cache_service,

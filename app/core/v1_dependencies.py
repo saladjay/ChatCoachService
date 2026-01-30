@@ -33,15 +33,14 @@ logger = logging.getLogger(__name__)
 SCREENSHOT_ANALYSIS_AVAILABLE = False
 try:
     from screenshotanalysis.dialog_pipeline2 import analyze_chat_image
-    from screenshotanalysis import ChatLayoutAnalyzer, ChatTextRecognition
+    from screenshotanalysis import get_models
     from screenshotanalysis.processors import ChatMessageProcessor
     SCREENSHOT_ANALYSIS_AVAILABLE = True
     logger.info("screenshotanalysis library imported successfully")
 except ImportError as e:
     logger.error(f"Failed to import screenshotanalysis: {e}")
     analyze_chat_image = None
-    ChatLayoutAnalyzer = None
-    ChatTextRecognition = None
+    get_models = None
     ChatMessageProcessor = None
 
 
@@ -50,9 +49,11 @@ class ScreenshotAnalysisService:
     
     def __init__(self):
         """Initialize the service with lazy-loaded models."""
+        self._models = None
         self._text_det_analyzer = None
         self._layout_det_analyzer = None
         self._text_rec = None
+        self._text_rec_models = None
         self._processor = None
         self._models_loaded = False
     
@@ -65,20 +66,34 @@ class ScreenshotAnalysisService:
             raise Exception("screenshotanalysis library is not available")
         
         logger.info("Loading screenshotanalysis models...")
-        self._text_det_analyzer = ChatLayoutAnalyzer(model_name="PP-OCRv5_server_det")
-        self._text_det_analyzer.load_model()
-        
-        self._layout_det_analyzer = ChatLayoutAnalyzer(model_name="PP-DocLayoutV2")
-        self._layout_det_analyzer.load_model()
-        
-        self._text_rec = ChatTextRecognition(model_name="PP-OCRv5_server_rec", lang="en")
-        self._text_rec.load_model()
-        
+
+        if get_models is None:
+            raise Exception("screenshotanalysis get_models() is not available")
+
+        models = get_models()
+        self._models = models
+        self._layout_det_analyzer = models.get("layout_det")
+        self._text_det_analyzer = models.get("text_det")
+        self._text_rec = models.get("en_rec")
+
+        self._text_rec_models = {
+            "en": models.get("en_rec"),
+            "ar": models.get("ar_rec"),
+            "pt": models.get("pt_rec"),
+            "es": models.get("es_rec"),
+        }
+        self._pt_rec = models.get("pt_rec")
+        self._ar_rec = models.get("ar_rec")
+        self._es_rec = models.get("es_rec")
+
+        if self._layout_det_analyzer is None or self._text_det_analyzer is None or self._text_rec is None:
+            raise Exception("screenshotanalysis models are not available from get_models()")
+
         self._processor = ChatMessageProcessor()
         self._models_loaded = True
         logger.info("All screenshotanalysis models loaded successfully")
     
-    async def analyze_screenshot(self, image_path: str) -> dict:
+    async def analyze_screenshot(self, image_path: str, lang: str = "en") -> dict:
         """
         Analyze a screenshot using analyze_chat_image.
         
@@ -89,7 +104,13 @@ class ScreenshotAnalysisService:
             Dictionary with talker_nickname, dialogs, and timings
         """
         self._ensure_models_loaded()
-        
+
+        rec_model = None
+        if isinstance(lang, str) and lang.strip():
+            rec_model = (self._text_rec_models or {}).get(lang.strip().lower())
+        if rec_model is None:
+            rec_model = self._text_rec
+# 
         # Call analyze_chat_image with loaded models
         output_payload, _ = analyze_chat_image(
             image_path=image_path,
@@ -97,7 +118,7 @@ class ScreenshotAnalysisService:
             draw_output_path=None,
             text_det_analyzer=self._text_det_analyzer,
             layout_det_analyzer=self._layout_det_analyzer,
-            text_rec=self._text_rec,
+            text_rec=rec_model,
             processor=self._processor,
             speaker_map=None,
             track_model_calls=False,
