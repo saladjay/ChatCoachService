@@ -7,6 +7,14 @@ echo "Starting ChatCoach API Server"
 echo "========================================"
 echo ""
 
+# Activate virtual environment if it exists
+if [ -f ".venv/bin/activate" ]; then
+    echo "Activating virtual environment..."
+    # shellcheck disable=SC1091
+    . ./.venv/bin/activate
+    echo "✓ Virtual environment activated"
+fi
+
 script_args=()
 log_prompt=false
 for arg in "$@"; do
@@ -17,13 +25,14 @@ for arg in "$@"; do
   fi
 done
 
-# Check if uvicorn is installed
 echo "Checking dependencies..."
-if ! python -m pip show uvicorn > /dev/null 2>&1; then
-    echo "Error: uvicorn is not installed"
-    echo "Please run: pip install uvicorn"
-    exit 1
+if ! python -c "import uvicorn; print('ok')" > /dev/null 2>&1; then
+  echo "Error: uvicorn is not installed"
+  echo "Please run: uv pip install uvicorn"
+  echo "Or: pip install uvicorn"
+  exit 1
 fi
+echo "✓ uvicorn is installed"
 
 # Check if .env file exists
 if [ ! -f ".env" ]; then
