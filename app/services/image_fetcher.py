@@ -129,10 +129,10 @@ class ImageFetcher:
                 raise ValueError(f"Invalid image dimensions: {width}x{height}")
             
             # Validate image format
-            if img.format not in ("PNG", "JPEG", "WEBP"):
+            if img.format not in ("PNG", "JPEG", "WEBP", "GIF", "BMP"):
                 raise ValueError(
                     f"Unsupported image format: {img.format}. "
-                    "Supported formats: PNG, JPEG, WebP"
+                    "Supported formats: PNG, JPEG, WebP, GIF, BMP"
                 )
             
             return width, height

@@ -16,7 +16,7 @@ import io
 import base64
 import httpx
 
-from app.models.api import ImageResult, DialogItem
+from app.models.v1_api import ImageResult, DialogItem
 from app.core.v1_config import ScreenshotConfig
 
 
@@ -323,7 +323,7 @@ class ScreenshotProcessor:
                     )
 
                 return ImageResult(
-                    url=image_url,
+                    content=image_url,
                     dialogs=dialogs,
                 )
             except Exception as e:
@@ -344,7 +344,7 @@ class ScreenshotProcessor:
         )
         
         return ImageResult(
-            url=image_url,
+            content=image_url,
             dialogs=dialogs
         )
     
