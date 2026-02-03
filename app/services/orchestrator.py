@@ -243,7 +243,10 @@ class Orchestrator:
                 await self._append_cache_event(request, "scene_analysis", scene.model_dump(mode="json"))
             
             # Step 3: Infer persona
-            cached_persona = await self._get_cached_payload(request, "persona_analysis")
+            cached_persona = None
+            if not settings.no_persona_cache:
+                cached_persona = await self._get_cached_payload(request, "persona_analysis")
+                
             if cached_persona:
                 persona = PersonaSnapshot(**cached_persona)
             else:
@@ -356,7 +359,10 @@ class Orchestrator:
                 await self._append_cache_event(request, "scene_analysis", scene.model_dump(mode="json"))
             
             # Step 3: Infer persona
-            cached_persona = await self._get_cached_payload(request, "persona_analysis")
+            cached_persona = None
+            if not settings.no_persona_cache:
+                cached_persona = await self._get_cached_payload(request, "persona_analysis")
+
             if cached_persona:
                 persona = PersonaSnapshot(**cached_persona)
             else:
