@@ -152,6 +152,7 @@ class AppConfig(BaseSettings):
     debug: bool = False
     no_reply_cache: bool = True
     no_strategy_planner: bool = True
+    no_persona_cache: bool = True
     
     # API settings
     api_prefix: str = "/api/v1"

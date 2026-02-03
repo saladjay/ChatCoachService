@@ -88,6 +88,11 @@
         "version": "v3.2-compact_v2_no_reasoning",
         "version_id": "reply_generation_compact_v2_no_reasoning",
         "created_at": "2026-01-27T23:34:18.956382"
+      },
+      {
+        "prompt_id": "reply_generation_v3.3",
+        "version": "v3.3",
+        "created_at": "2026-02-02T17:55:19.459099"
       }
     ],
     "trait_discovery": [
@@ -130,7 +135,7 @@
   "active_versions": {
     "scenario_analysis": "scenario_analysis_v2.0-compact",
     "context_summary": "context_summary_v3.0-compact",
-    "reply_generation": "reply_generation_v2.0-compact",
+    "reply_generation": "reply_generation_v3.3",
     "trait_discovery": "trait_discovery_v1.0-original",
     "trait_mapping": "trait_mapping_v1.0-original",
     "screenshot_parse": "screenshot_parse_v2.0-compact"
@@ -338,6 +343,18 @@
       "prompt_id": "context_summary_v3.0-compact",
       "action": "activate",
       "timestamp": "2026-01-29T17:24:16.529975",
+      "author": "cli_user"
+    },
+    {
+      "prompt_id": "reply_generation_v3.3",
+      "action": "register",
+      "timestamp": "2026-02-02T17:55:19.459736",
+      "author": "cli_user"
+    },
+    {
+      "prompt_id": "reply_generation_v3.3",
+      "action": "activate",
+      "timestamp": "2026-02-02T17:55:19.474943",
       "author": "cli_user"
     }
   ]

@@ -291,13 +291,16 @@ async def get_screenshot_analysis_result(
             scene=scene,
         )
         if image_result is not None:
+            image_result.content = content_url
             return image_result
         else:
             try:
+                # raise Exception("Failed to get screenshot analysis from cache")
                 image_result = await _get_screenshot_analysis_from_local_service(content_url, lang, screenshot_service)
             except Exception:
                 image_result = await _get_screenshot_analysis_from_cloud_service(content_url, screenshot_parser)
         if image_result:
+            image_result.content = content_url
             return image_result
         else:
             raise HTTPException(
@@ -351,11 +354,14 @@ async def _scenario_analysis(
                 # current_scenario: str = ""  # 当前情景（安全/低风险策略|平衡/中风险策略|高风险/高回报策略|关系修复策略|禁止的策略）
                 # recommended_scenario: str = ""  # 推荐情景
                 # recommended_strategies: list[str] = Field(default_factory=list)  # 推荐的对话策略（3个策略代码）
-                scenario_str = f"current scenario:{scenario_analysis_result.current_scenario}, \
-                recommended scenario:{scenario_analysis_result.recommended_scenario}, \
-                recommended strategies:{scenario_analysis_result.recommended_strategies}"
+                scenario_json = {
+                    "current_scenario": scenario_analysis_result.current_scenario,
+                    "recommended_scenario": scenario_analysis_result.recommended_scenario,
+                    "recommended_strategies": scenario_analysis_result.recommended_strategies,
+                }
                 for image_result in list_image_result:
-                    image_result.scenario = scenario_str
+
+                    image_result.scenario = json.dumps(scenario_json, ensure_ascii=False)
                     results.append(image_result)
             else:
                 logger.warning("Orchestrator not available, skipping reply generation")
@@ -470,6 +476,7 @@ async def handle_image(
                 screenshot_service,
                 screenshot_parser,
             )
+            image_result.content = content_url
             logger.info(f"Image result: {type(image_result)}")
             logger.info(f"Content processed successfully: {len(image_result.dialogs)} dialogs extracted")
      
@@ -582,7 +589,7 @@ async def handle_image(
     # Record successful request
     duration_ms = int((time.time() - start_time) * 1000)
     metrics.record_request("predict", 200, duration_ms)
-
+    logger.info(f'result scenario:{results[0].scenario}')
     # Return successful response
     return PredictResponse(
         success=True,
