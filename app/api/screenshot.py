@@ -22,19 +22,6 @@ from app.models.screenshot import (
 )
 
 
-# 尝试导入 screenshotanalysis 库
-SCREENSHOT_ANALYSIS_AVAILABLE = False
-SCREENSHOT_ANALYSIS_ERROR = None
-ScreenshotAnalysisException = None
-
-try:
-    import screenshotanalysis
-    from screenshotanalysis import ScreenshotAnalysisException
-    SCREENSHOT_ANALYSIS_AVAILABLE = True
-except Exception as e:
-    SCREENSHOT_ANALYSIS_ERROR = str(e)
-
-
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/chat_screenshot", tags=["screenshot"])
@@ -90,17 +77,6 @@ async def parse_screenshot(
     Requirements: 1.1, 1.2, 1.3, 1.4, 6.1, 6.2, 6.3, 6.4, 6.5
     """
     try:
-        # 检查 screenshotanalysis 库是否可用
-        if not SCREENSHOT_ANALYSIS_AVAILABLE:
-            logger.error(
-                f"screenshotanalysis library not available: {SCREENSHOT_ANALYSIS_ERROR}"
-            )
-            return ParseScreenshotResponse(
-                code=500,
-                msg=f"Screenshot analysis library unavailable: {SCREENSHOT_ANALYSIS_ERROR}",
-                data=None
-            )
-        
         # Validate image_url format (handled by Pydantic min_length=1)
         # Validate optional parameters (handled by Pydantic field validators)
         # Requirements: 6.1, 6.2, 6.3, 6.4, 6.5
@@ -120,15 +96,6 @@ async def parse_screenshot(
         return response
     
     except Exception as e:
-        # Handle screenshotanalysis specific exceptions
-        if SCREENSHOT_ANALYSIS_AVAILABLE and ScreenshotAnalysisException and isinstance(e, ScreenshotAnalysisException):
-            logger.error(f"Screenshot analysis error: {e}")
-            return ParseScreenshotResponse(
-                code=1001,
-                msg=f"Screenshot analysis failed: {str(e)}",
-                data=None
-            )
-        
         # Handle validation errors
         if isinstance(e, PydanticValidationError):
             logger.warning(f"Validation error in parse_screenshot: {e}")

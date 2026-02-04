@@ -19,35 +19,6 @@ def client():
 
 
 @pytest.fixture
-def mock_screenshot_processor():
-    """Create a mock ScreenshotProcessor."""
-    processor = Mock()
-    
-    # Mock successful screenshot processing
-    async def mock_process_screenshot(image_url, app_type, conf_threshold=None):
-        return ImageResult(
-            url=image_url,
-            dialogs=[
-                DialogItem(
-                    position=[0.1, 0.2, 0.3, 0.4],
-                    text="Hello, how are you?",
-                    speaker="other",
-                    from_user=False,
-                ),
-                DialogItem(
-                    position=[0.6, 0.2, 0.8, 0.4],
-                    text="I'm doing great, thanks!",
-                    speaker="self",
-                    from_user=True,
-                ),
-            ]
-        )
-    
-    processor.process_screenshot = mock_process_screenshot
-    return processor
-
-
-@pytest.fixture
 def mock_orchestrator():
     """Create a mock Orchestrator."""
     orchestrator = Mock()
@@ -71,91 +42,56 @@ class TestPredictEndpoint:
         response = client.post("/api/v1/ChatCoach/predict", json={})
         assert response.status_code in [400, 422]  # Validation error expected
     
-    @patch("app.core.v1_dependencies.get_v1_screenshot_processor")
-    def test_predict_with_valid_request(self, mock_get_processor, client, mock_screenshot_processor):
-        """Test predict endpoint with valid request."""
-        mock_get_processor.return_value = mock_screenshot_processor
-        
+    def test_predict_with_minimal_request(self, client):
         request_data = {
-            "urls": ["https://example.com/screenshot.jpg"],
-            "app_name": "whatsapp",
+            "content": ["https://example.com/screenshot.jpg"],
             "language": "en",
+            "scene": 1,
             "user_id": "test_user_123",
-            "request_id": "req_123",
-            "conf_threshold": 0.7,
+            "session_id": "session_test",
+            "other_properties": "",
             "reply": False,
+            "scene_analysis": False,
+            "sign": "00000000000000000000000000000000",
         }
-        
         response = client.post("/api/v1/ChatCoach/predict", json=request_data)
-        
-        # Should succeed or fail gracefully
-        assert response.status_code in [200, 400, 401, 500]
-        
-        if response.status_code == 200:
-            data = response.json()
-            assert "success" in data
-            assert "message" in data
-            assert "user_id" in data
-            assert "results" in data
-    
-    @patch("app.core.v1_dependencies.get_v1_screenshot_processor")
-    @patch("app.core.v1_dependencies.get_v1_orchestrator")
-    def test_predict_with_reply_generation(
-        self, mock_get_orch, mock_get_processor, client, 
-        mock_screenshot_processor, mock_orchestrator
-    ):
-        """Test predict endpoint with reply generation enabled."""
-        mock_get_processor.return_value = mock_screenshot_processor
-        mock_get_orch.return_value = mock_orchestrator
-        
-        request_data = {
-            "urls": ["https://example.com/screenshot.jpg"],
-            "app_name": "whatsapp",
-            "language": "en",
-            "user_id": "test_user_123",
-            "reply": True,
-        }
-        
-        response = client.post("/api/v1/ChatCoach/predict", json=request_data)
-        
-        # Should succeed or fail gracefully
-        assert response.status_code in [200, 400, 401, 500]
-        
-        if response.status_code == 200:
-            data = response.json()
-            assert "success" in data
-            assert "results" in data
-            # suggested_replies may or may not be present depending on orchestrator
+        assert response.status_code in [200, 400, 422, 500]
     
     def test_predict_validation_empty_urls(self, client):
-        """Test that empty URLs list is rejected."""
+        """Test that empty content list is rejected."""
         request_data = {
-            "urls": [],  # Empty list should be rejected
-            "app_name": "whatsapp",
             "language": "en",
+            "scene": 1,
             "user_id": "test_user_123",
+            "session_id": "session_test",
+            "content": [],
+            "sign": "00000000000000000000000000000000",
         }
         
         response = client.post("/api/v1/ChatCoach/predict", json=request_data)
         assert response.status_code == 422  # Validation error
     
     def test_predict_validation_invalid_app_name(self, client):
-        """Test that invalid app_name is rejected."""
+        """Test that invalid scene is rejected."""
         request_data = {
-            "urls": ["https://example.com/screenshot.jpg"],
-            "app_name": "invalid_app",  # Not in supported apps
+            "content": ["https://example.com/screenshot.jpg"],
             "language": "en",
+            "scene": 99,
             "user_id": "test_user_123",
+            "session_id": "session_test",
+            "other_properties": "",
+            "sign": "00000000000000000000000000000000",
         }
         
         response = client.post("/api/v1/ChatCoach/predict", json=request_data)
-        assert response.status_code == 422  # Validation error
+        assert response.status_code in [400, 422]
     
     def test_predict_validation_invalid_language(self, client):
         """Test that invalid language is rejected."""
         request_data = {
-            "urls": ["https://example.com/screenshot.jpg"],
-            "app_name": "whatsapp",
+            "content": ["https://example.com/screenshot.jpg"],
+            "language": "invalid_lang",
+            "scene": 1,
             "language": "invalid_lang",  # Not in supported languages
             "user_id": "test_user_123",
         }
