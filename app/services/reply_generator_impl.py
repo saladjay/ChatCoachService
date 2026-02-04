@@ -8,7 +8,7 @@ from app.services.user_profile_impl import BaseUserProfileService
 from app.services.prompt_assembler import PromptAssembler, REPLY_LENGTH_CONSTRAINTS
 from app.services.schema_expander import SchemaExpander, parse_and_expand_reply_generation
 from app.models.schemas_compact import ReplyGenerationCompact
-from app.core.config import PromptConfig
+from app.core.config import PromptConfig, settings
 from typing import Optional
 import json
 
@@ -72,7 +72,7 @@ class LLMAdapterReplyGenerator(BaseReplyGenerator):
         """
         # Phase 2: 如果有 strategy_planner，先规划策略
         strategy_plan = None
-        if self.strategy_planner and input.scene and input.context:
+        if (not settings.no_strategy_planner) and self.strategy_planner and input.scene and input.context:
             from app.services.strategy_planner import StrategyPlanInput
             
             plan_input = StrategyPlanInput(
