@@ -158,16 +158,13 @@ class V1Config(BaseSettings):
             level=self.logging.get_level(),
             use_json=self.logging.use_json
         )
-        
+         
         # Configure submodule loggers
         submodule_level = self.logging.get_submodule_level()
-        screenshotanalysis_logger = logging.getLogger("screenshotanalysis")
-        screenshotanalysis_logger.setLevel(self.logging.get_level())
-
         for module_name in ["paddleocr", "paddle"]:
             logger = logging.getLogger(module_name)
             logger.setLevel(submodule_level)
-            
+             
             # Prevent propagation to avoid duplicate logs
             logger.propagate = False
         
