@@ -14,14 +14,12 @@ import json
 from fastapi import APIRouter, HTTPException
 from typing import Literal, List
 from copy import deepcopy
+from urllib.parse import urlparse
 from app.models.v1_api import PredictRequest, PredictResponse, ImageResult, DialogItem, ErrorResponse
 from app.services.llm_adapter import LLMAdapterError, LLMCall, create_llm_adapter
 from app.core.v1_dependencies import (
-    ScreenshotAnalysisServiceDep,
     OrchestratorDep,
     MetricsCollectorDep)
-from app.services.screenshot_processor import is_url
-
 from app.core.dependencies import SessionCategorizedCacheServiceDep, ScreenshotParserDep
 from app.models.screenshot import ParseScreenshotRequest
 
@@ -34,6 +32,14 @@ ImageAnalysisQueueInput = tuple[list[str], list[DialogItem], list[ImageResult]]
 
 # define ("image"|"text", ImageResult) as SpecifiedImageResult
 SpecifiedImageResult = tuple[Literal["image", "text"], ImageResult]
+
+
+def _is_url(content: str) -> bool:
+    try:
+        parsed = urlparse(content)
+        return parsed.scheme in ("http", "https") and bool(parsed.netloc)
+    except Exception:
+        return False
 
 
 @router.post(
@@ -73,7 +79,6 @@ SpecifiedImageResult = tuple[Literal["image", "text"], ImageResult]
 )
 async def predict(
     request: PredictRequest,
-    screenshot_service: ScreenshotAnalysisServiceDep,
     screenshot_parser: ScreenshotParserDep,
     orchestrator: OrchestratorDep,
     metrics: MetricsCollectorDep,
@@ -90,7 +95,6 @@ async def predict(
     
     Args:
         request: PredictRequest with content, language, scene, user_id, etc.
-        screenshot_service: ScreenshotAnalysisService dependency
         screenshot_parser: ScreenshotParserService dependency
         orchestrator: Orchestrator service dependency
         metrics: MetricsCollector service dependency
@@ -160,7 +164,6 @@ async def predict(
         if normalized_scene == 1:
             return await handle_image(
                 request,
-                screenshot_service,
                 screenshot_parser,
                 orchestrator,
                 start_time,
@@ -203,40 +206,6 @@ async def _get_screenshot_analysis_from_cache(content_url, session_id, scene, ca
             return cached_result
     return None
 
-async def _get_screenshot_analysis_from_local_service(content_url, lang, screenshot_service: ScreenshotAnalysisServiceDep):
-    try:
-        dialogs = []
-        output_payload = await screenshot_service.analyze_screenshot(content_url, lang)
-        logger.info(f"dialogs from screenshot analysis: {output_payload.get('dialogs', [])}")
-        for dialog_data in output_payload.get("dialogs", []):
-            box = dialog_data.get("box", [0, 0, 0, 0])
-            speaker = dialog_data.get("speaker", "unknown")
-            from_user = (speaker == "user")
-            
-            # Create DialogItem with normalized coordinates
-            dialog_item = DialogItem(
-                position=box,
-                text=dialog_data.get("text", ""),
-                speaker=speaker,
-                from_user=from_user,
-            )
-            dialogs.append(dialog_item)
-        
-        # Create image result
-        result = ImageResult(
-            content=content_url,
-            dialogs=dialogs
-        )
-        
-        logger.info(f"Successfully analyzed screenshot: {content_url}")
-        return result
-        
-    except Exception as e:
-        logger.error(f"Error analyzing screenshot {content_url}: {str(e)}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to analyze screenshot: {str(e)}"
-        )
 
 async def _get_screenshot_analysis_from_cloud_service(content_url, screenshot_parser: ScreenshotParserDep):
     try:
@@ -273,15 +242,15 @@ async def _get_screenshot_analysis_from_cloud_service(content_url, screenshot_pa
             detail=f"Failed to analyze screenshot: {str(e)}"
         )
 
+
 async def get_screenshot_analysis_result(
     content_url, 
     lang,
     session_id,
     scene,
     cache_service: SessionCategorizedCacheServiceDep, 
-    screenshot_service: ScreenshotAnalysisServiceDep,
     screenshot_parser: ScreenshotParserDep,
-    ) -> ImageResult:
+) -> ImageResult:
     try:
         logger.info(f"Processing content: {content_url}")
         image_result = await _get_screenshot_analysis_from_cache(
@@ -293,12 +262,7 @@ async def get_screenshot_analysis_result(
         if image_result is not None:
             image_result.content = content_url
             return image_result
-        else:
-            try:
-                # raise Exception("Failed to get screenshot analysis from cache")
-                image_result = await _get_screenshot_analysis_from_local_service(content_url, lang, screenshot_service)
-            except Exception:
-                image_result = await _get_screenshot_analysis_from_cloud_service(content_url, screenshot_parser)
+        image_result = await _get_screenshot_analysis_from_cloud_service(content_url, screenshot_parser)
         if image_result:
             image_result.content = content_url
             return image_result
@@ -319,7 +283,7 @@ async def _scenario_analysis(
     request: PredictRequest,
     orchestrator: OrchestratorDep,
     analysis_queue:List[ImageAnalysisQueueInput]
-    ) -> List[ImageResult]:
+) -> List[ImageResult]:
     try:
         logger.info("Scene analysis requested, calling Orchestrator")
         results = []
@@ -379,7 +343,7 @@ async def _generate_reply(
     request: PredictRequest,
     orchestrator: OrchestratorDep,
     analysis_queue:List[ImageAnalysisQueueInput]
-    ) -> List[str]:
+) -> List[str]:
     try:
         logger.info("Reply generation requested, calling Orchestrator")
         suggested_replies: list[str] = []
@@ -440,7 +404,6 @@ async def _generate_reply(
 
 async def handle_image(
     request: PredictRequest,
-    screenshot_service: ScreenshotAnalysisServiceDep,
     screenshot_parser: ScreenshotParserDep,
     orchestrator: OrchestratorDep,
     start_time: float,
@@ -453,7 +416,7 @@ async def handle_image(
     for content_url in request.content:
         try:
             logger.info(f"Processing content: {content_url}")
-            if not is_url(content_url):
+            if not _is_url(content_url):
                 text_result = ImageResult(
                     content=content_url,
                     dialogs=[
@@ -473,7 +436,6 @@ async def handle_image(
                 request.session_id,
                 request.scene,
                 cache_service,
-                screenshot_service,
                 screenshot_parser,
             )
             image_result.content = content_url
@@ -605,7 +567,6 @@ async def handle_image(
 
 async def handle_image_old(
     request: PredictRequest,
-    screenshot_service: ScreenshotAnalysisServiceDep,
     screenshot_parser: ScreenshotParserDep,
     orchestrator: OrchestratorDep,
     start_time: float,
@@ -618,7 +579,7 @@ async def handle_image_old(
     for content_url in request.content:
         try:
             logger.info(f"Processing content: {content_url}")
-            if not is_url(content_url):
+            if not _is_url(content_url):
                 results_dict[content_url] = [
                     "text",
                     ImageResult(
@@ -636,10 +597,10 @@ async def handle_image_old(
                 continue
             image_result = await get_screenshot_analysis_result(
                 content_url,
+                request.language,
                 request.session_id,
                 request.scene,
                 cache_service,
-                screenshot_service,
                 screenshot_parser,
             )
             logger.info(f"Image result: {type(image_result)}")
@@ -760,9 +721,11 @@ async def handle_image_old(
                     # recommended_scenario: str = ""  # 推荐情景
                     # recommended_strategies: list[str] = Field(default_factory=list)  # 推荐的对话策略（3个策略代码）
                     results.append(_image_result[1])
-                    results[-1].scenario = f"current scenario:{scenario_analysis_result.current_scenario}, \
-                    recommended scenario:{scenario_analysis_result.recommended_scenario}, \
-                    recommended strategies:{scenario_analysis_result.recommended_strategies}"
+                    results[-1].scenario = (
+                        f"current scenario:{scenario_analysis_result.current_scenario}, "
+                        f"recommended scenario:{scenario_analysis_result.recommended_scenario}, "
+                        f"recommended strategies:{scenario_analysis_result.recommended_strategies}"
+                    )
                 else:
                     logger.warning("Orchestrator not available, skipping reply generation")
             
