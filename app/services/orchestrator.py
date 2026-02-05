@@ -185,7 +185,8 @@ class Orchestrator:
         except ContextBuildError as e:
             # Fallback for context build failure (Requirement 4.4)
             logger.error(f"Context build failed: {e}")
-            return self._create_fallback_response(exec_ctx, scene=None)
+            # Return a fallback SceneAnalysisResult instead of GenerateReplyResponse
+            return self._create_fallback_scene_analysis()
             
         except Exception as e:
             # Log error and return friendly response (Requirement 4.5)
@@ -791,6 +792,18 @@ class Orchestrator:
                     quality = "cheap"
                     logger.info(f"Cost limit reached, forcing cheap quality")
                 
+                # Skip intimacy check if disabled in settings
+                if settings.no_intimacy_check:
+                    logger.info("Intimacy check disabled by configuration")
+                    # Create a passing intimacy result
+                    from app.models.schemas import IntimacyCheckResult
+                    intimacy_result = IntimacyCheckResult(
+                        passed=True,
+                        reason="Intimacy check disabled",
+                        score=1.0,
+                    )
+                    return reply_result, intimacy_result
+                
                 # Check intimacy
                 intimacy_input = IntimacyCheckInput(
                     reply_text=reply_result.text,
@@ -945,6 +958,22 @@ class Orchestrator:
             provider="fallback",
             cost_usd=exec_ctx.accumulated_cost,
             fallback=True,
+        )
+
+    def _create_fallback_scene_analysis(self) -> SceneAnalysisResult:
+        """Create a fallback SceneAnalysisResult for error scenarios.
+        
+        Returns:
+            SceneAnalysisResult with default/safe values.
+        """
+        return SceneAnalysisResult(
+            scenario="safe",
+            intimacy_level=50,  # Neutral intimacy level
+            relationship_state="维持",  # "maintain" - safe default
+            current_scenario="safe",
+            recommended_scenario="safe",
+            recommended_strategies=["BE_SUPPORTIVE", "SHOW_INTEREST", "BE_RESPECTFUL"],
+            risk_flags=[],
         )
 
     def _messages_to_dialogs(self, messages):

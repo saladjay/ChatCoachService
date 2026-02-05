@@ -13,6 +13,7 @@ import asyncio
 import time
 import argparse
 import json
+import hashlib
 from typing import List, Dict, Any
 from dataclasses import dataclass, field
 import statistics
@@ -112,6 +113,7 @@ class LoadTester:
         timeout: float = 60.0,
         image_url: str | None = None,
         disable_cache: bool = False,
+        sign_secret: str = "",
     ):
         """Initialize load tester.
         
@@ -120,13 +122,16 @@ class LoadTester:
             timeout: Request timeout in seconds
             image_url: Optional custom image URL to test
             disable_cache: If True, bypass cache by using unique session IDs
+            sign_secret: Secret for generating sign (default from config.yaml)
         """
         self.base_url = base_url.rstrip('/')
         self.timeout = timeout
         self.image_url = image_url
         self.disable_cache = disable_cache
+        self.sign_secret = sign_secret
         self.stats = LoadTestStats()
-        self._request_counter = 0
+        # Use timestamp to ensure unique counters across test runs
+        self._request_counter = int(time.time() * 1000)  # milliseconds since epoch
     
     async def make_request(
         self,
@@ -157,6 +162,7 @@ class LoadTester:
                         image_url=self.image_url,
                         disable_cache=True,
                         request_index=self._request_counter,
+                        sign_secret=self.sign_secret,
                     )
                     self._request_counter += 1
                 
@@ -168,12 +174,34 @@ class LoadTester:
             
             response_time = time.time() - start_time
             
+            # Extract error details for non-200 responses
+            error_msg = ""
+            if response.status_code != 200:
+                try:
+                    error_data = response.json()
+                    if isinstance(error_data, dict):
+                        # Try to get detailed error message
+                        error_msg = error_data.get("detail", f"HTTP {response.status_code}")
+                        # If detail is a list (validation errors), format it
+                        if isinstance(error_msg, list):
+                            error_parts = []
+                            for e in error_msg[:3]:
+                                loc = e.get('loc', [])
+                                field = loc[-1] if loc else 'field'
+                                msg = e.get('msg', '')
+                                error_parts.append(f"{field}: {msg}")
+                            error_msg = "; ".join(error_parts)
+                    else:
+                        error_msg = f"HTTP {response.status_code}"
+                except Exception:
+                    error_msg = f"HTTP {response.status_code}"
+            
             return TestResult(
                 success=response.status_code == 200,
                 status_code=response.status_code,
                 response_time=response_time,
                 response_size=len(response.content),
-                error="" if response.status_code == 200 else f"HTTP {response.status_code}",
+                error=error_msg,
             )
             
         except httpx.TimeoutException:
@@ -325,10 +353,25 @@ class LoadTester:
         print("=" * 80)
 
 
+def generate_sign(session_id: str, secret: str = "") -> str:
+    """Generate MD5 sign for request validation.
+    
+    Args:
+        session_id: Session ID
+        secret: Sign secret (default from config.yaml)
+    
+    Returns:
+        MD5 hash string
+    """
+    raw = f"{session_id}ChatCoach{secret}".encode("utf-8")
+    return hashlib.md5(raw).hexdigest()
+
+
 def create_test_payload(
     image_url: str | None = None,
     disable_cache: bool = False,
     request_index: int = 0,
+    sign_secret: str = "",
 ) -> Dict[str, Any]:
     """Create a test payload for the predict endpoint.
     
@@ -336,6 +379,7 @@ def create_test_payload(
         image_url: Optional custom image URL to test
         disable_cache: If True, use unique session_id to bypass cache
         request_index: Request index for unique session_id generation
+        sign_secret: Secret for generating sign (default from config.yaml)
     
     Returns:
         Test payload dictionary
@@ -346,6 +390,9 @@ def create_test_payload(
     # Generate unique session_id if cache is disabled
     session_id = f"load_test_session_{request_index}" if disable_cache else "load_test_session"
     
+    # Generate sign
+    sign = generate_sign(session_id, sign_secret)
+    
     payload = {
         "user_id": "load_test_user",
         "session_id": session_id,
@@ -354,8 +401,9 @@ def create_test_payload(
         "scene": 1,
         "scene_analysis": True,
         "reply": True,
-        "other_properties": "casual",
-        "content": [content_url]
+        "other_properties": "",  # Empty string is valid
+        "content": [content_url],
+        "sign": sign,
     }
     
     # Add force_regenerate flag if cache is disabled
@@ -379,6 +427,8 @@ async def main():
     parser.add_argument("--health-check", action="store_true", help="Test health check endpoint")
     parser.add_argument("--image-url", type=str, help="Custom image URL to test (default: test_discord_2.png)")
     parser.add_argument("--disable-cache", action="store_true", help="Disable cache by using unique session IDs")
+    parser.add_argument("--sign-secret", type=str, default="", 
+                        help="Sign secret for request validation (default from config.yaml)")
     
     args = parser.parse_args()
     
@@ -388,6 +438,7 @@ async def main():
         timeout=args.timeout,
         image_url=args.image_url,
         disable_cache=args.disable_cache,
+        sign_secret=args.sign_secret,
     )
     
     # Health check test
@@ -407,6 +458,7 @@ async def main():
         image_url=args.image_url,
         disable_cache=args.disable_cache,
         request_index=0,
+        sign_secret=args.sign_secret,
     )
     
     # Run appropriate test

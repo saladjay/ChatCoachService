@@ -11,6 +11,9 @@ Requirements: 3.1, 3.2, 3.3, 3.4, 3.5, 3.6, 3.7, 3.8, 3.9, 3.10, 3.11, 3.12,
 import logging
 import time
 import json
+import os
+from datetime import datetime
+from pathlib import Path
 from fastapi import APIRouter, HTTPException
 from typing import Literal, List
 from copy import deepcopy
@@ -22,6 +25,8 @@ from app.core.v1_dependencies import (
     MetricsCollectorDep)
 from app.core.dependencies import SessionCategorizedCacheServiceDep, ScreenshotParserDep
 from app.models.screenshot import ParseScreenshotRequest
+from app.core.config import settings
+from app.observability.trace_logger import trace_logger
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +34,42 @@ router = APIRouter(tags=["predict"])
 
 # define (list[str], list[DialogItem], list[ImageResult]) as ImageAnalysisQueueInput
 ImageAnalysisQueueInput = tuple[list[str], list[DialogItem], list[ImageResult]]
+
+
+def _log_failed_json_reply(reply_text: str, session_id: str, error_msg: str) -> None:
+    """Log failed JSON reply to file for analysis.
+    
+    Args:
+        reply_text: The raw reply text that failed to parse
+        session_id: Session ID for tracking
+        error_msg: Error message from the exception
+    """
+    try:
+        # Create logs directory if it doesn't exist
+        log_dir = Path("logs/failed_json_replies")
+        log_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Create filename with timestamp
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+        filename = log_dir / f"failed_reply_{timestamp}_{session_id[:8]}.json"
+        
+        # Prepare log entry
+        log_entry = {
+            "timestamp": datetime.now().isoformat(),
+            "session_id": session_id,
+            "error": error_msg,
+            "reply_text": reply_text,
+            "reply_length": len(reply_text),
+        }
+        
+        # Write to file
+        with open(filename, "w", encoding="utf-8") as f:
+            json.dump(log_entry, f, indent=2, ensure_ascii=False)
+        
+        logger.info(f"Failed JSON reply logged to: {filename}")
+        
+    except Exception as e:
+        logger.error(f"Failed to log failed JSON reply: {e}")
 
 
 def parse_json_with_markdown(text: str) -> dict:
@@ -444,10 +485,28 @@ async def _generate_reply(
                             
                     except json.JSONDecodeError as exc:
                         logger.error(f"Failed to parse reply text as JSON: {orchestrator_response.reply_text[:200]}")
+                        
+                        # Log full failed JSON to file if enabled
+                        if settings.log_failed_json_replies:
+                            _log_failed_json_reply(
+                                orchestrator_response.reply_text,
+                                request.session_id,
+                                str(exc)
+                            )
+                        
                         suggested_replies = []
                         raise ValueError(f"Failed to parse reply text as JSON: {str(exc)}") from exc
                     except Exception as exc:
                         logger.error(f"Unexpected error parsing reply: {exc}")
+                        
+                        # Log full failed JSON to file if enabled
+                        if settings.log_failed_json_replies:
+                            _log_failed_json_reply(
+                                orchestrator_response.reply_text,
+                                request.session_id,
+                                str(exc)
+                            )
+                        
                         suggested_replies = []
                         raise ValueError(f"Failed to process reply text: {str(exc)}") from exc
                         
@@ -490,8 +549,19 @@ async def handle_image(
                 items.append(("text", content_url, text_result))
                 continue
             
-            # Time screenshot analysis
+            # Time screenshot analysis with trace logging
             screenshot_start = time.time()
+            
+            # Log screenshot analysis start
+            trace_logger.log_event({
+                "level": "debug",
+                "type": "screenshot_start",
+                "task_type": "screenshot_parse",
+                "url": content_url,
+                "session_id": request.session_id,
+                "user_id": request.user_id,
+            })
+            
             image_result = await get_screenshot_analysis_result(
                 content_url,
                 request.language,
@@ -501,6 +571,18 @@ async def handle_image(
                 screenshot_parser,
             )
             screenshot_duration_ms = int((time.time() - screenshot_start) * 1000)
+            
+            # Log screenshot analysis end with trace
+            trace_logger.log_event({
+                "level": "debug",
+                "type": "screenshot_end",
+                "task_type": "screenshot_parse",
+                "url": content_url,
+                "session_id": request.session_id,
+                "user_id": request.user_id,
+                "duration_ms": screenshot_duration_ms,
+            })
+            
             logger.info(f"Screenshot analysis completed in {screenshot_duration_ms}ms for {content_url}")
             
             image_result.content = content_url

@@ -33,6 +33,10 @@ class TraceLogger:
     def enabled(self) -> bool:
         return bool(settings.trace.enabled)
 
+    def should_log_prompt(self) -> bool:
+        """Check if prompts should be logged based on trace settings."""
+        return self.enabled() and getattr(settings.trace, 'log_llm_prompt', False)
+
     def _should_log(self, level: str | None) -> bool:
         if not self.enabled():
             return False
