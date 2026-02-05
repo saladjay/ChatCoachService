@@ -1,0 +1,59 @@
+# Strategy Mappings for Scenario-based Recommendations
+# Extracted from prompts/versions/scenario_analysis_v3.1-compact_v2.txt
+
+strategies:
+  SAFE:
+    - situational_comment
+    - light_humor
+    - neutral_open_question
+    - shared_experience_probe
+    - empathetic_ack
+    - pace_matching
+    - soft_callback
+    - curiosity_frame
+    - observational_flirt
+    - appreciation_without_hook
+    - calm_presence
+    - low_pressure_invite
+
+  BALANCED:
+    - playful_tease
+    - direct_compliment
+    - emotional_resonance
+    - perspective_flip
+    - value_signal
+    - micro_challenge
+    - assumptive_frame
+    - story_snippet
+    - flirt_with_escape
+    - selective_vulnerability
+    - energy_injection
+    - forward_reference
+    - curiosity_hook
+    - consent_check_light
+
+  RISKY:
+    - sexual_hint
+    - dominant_lead
+    - strong_frame_control
+    - bold_assumption
+    - fast_escalation
+    - taboo_play
+    - polarity_push
+    - emotional_spike
+    - intimate_projection
+    - scarcity_signal
+
+  RECOVERY:
+    - tension_release
+    - boundary_respect
+    - misstep_repair
+    - emotional_deescalation
+    - graceful_exit
+
+  NEGATIVE:
+    - validation_seeking
+    - logical_interview
+    - over_explaining
+    - neediness_signal
+    - performative_niceness
