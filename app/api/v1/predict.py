@@ -369,6 +369,100 @@ async def get_screenshot_analysis_result(
         )
 
 
+async def get_merge_step_analysis_result(
+    content_url: str,
+    request: PredictRequest,
+    orchestrator: OrchestratorDep,
+    cache_service: SessionCategorizedCacheServiceDep,
+) -> tuple[ImageResult, str]:
+    """
+    Get analysis result using merge_step optimized flow.
+    
+    This function uses orchestrator.merge_step_analysis() to perform
+    screenshot parsing, context building, and scenario analysis in a single LLM call.
+    
+    Args:
+        content_url: URL of the screenshot image
+        request: PredictRequest with user info
+        orchestrator: Orchestrator service
+        cache_service: Cache service
+        
+    Returns:
+        Tuple of (ImageResult with scenario, scenario_json_string)
+        
+    Raises:
+        HTTPException: If analysis fails
+    """
+    try:
+        logger.info(f"Processing content with merge_step: {content_url}")
+        
+        # Download and encode image
+        from app.services.image_fetcher import ImageFetcher
+        image_fetcher = ImageFetcher()
+        fetched_image = await image_fetcher.fetch_image(content_url)
+        
+        # Prepare GenerateReplyRequest for orchestrator
+        from app.models.api import GenerateReplyRequest
+        
+        orchestrator_request = GenerateReplyRequest(
+            user_id=request.user_id,
+            target_id="unknown",
+            conversation_id=request.session_id,
+            resources=[content_url],
+            dialogs=[],
+            language=request.language,
+            quality="normal",
+            persona=request.other_properties.lower() if request.other_properties else "",
+            scene=request.scene,
+        )
+        
+        # Call merge_step_analysis
+        context, scene = await orchestrator.merge_step_analysis(
+            request=orchestrator_request,
+            image_base64=fetched_image.base64_data,
+            image_width=fetched_image.width,
+            image_height=fetched_image.height,
+        )
+        
+        # Convert context.conversation to dialogs
+        dialogs = []
+        for msg in context.conversation:
+            dialog_item = DialogItem(
+                position=[0.0, 0.0, 0.0, 0.0],  # Position not available from merge_step
+                text=msg.content,
+                speaker=msg.speaker,
+                from_user=(msg.speaker == "user"),
+            )
+            dialogs.append(dialog_item)
+        
+        # Create scenario JSON
+        scenario_json = {
+            "current_scenario": scene.current_scenario,
+            "recommended_scenario": scene.recommended_scenario,
+            "recommended_strategies": scene.recommended_strategies,
+            "relationship_state": scene.relationship_state,
+            "intimacy_level": scene.intimacy_level,
+        }
+        
+        # Create ImageResult
+        image_result = ImageResult(
+            content=content_url,
+            dialogs=dialogs,
+            scenario=json.dumps(scenario_json, ensure_ascii=False),
+        )
+        
+        logger.info(f"merge_step analysis completed for {content_url}")
+        
+        return image_result, json.dumps(scenario_json, ensure_ascii=False)
+        
+    except Exception as e:
+        logger.error(f"Error in merge_step analysis for {content_url}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"merge_step analysis failed: {str(e)}",
+        )
+
+
 async def _scenario_analysis(
     request: PredictRequest,
     orchestrator: OrchestratorDep,
@@ -427,6 +521,84 @@ async def _scenario_analysis(
         results = []
         raise HTTPException(status_code=500, detail=f"scene analysis failed: {e}")
     return results
+
+
+async def _merged_scenario_analysis(
+    request: PredictRequest,
+    orchestrator: OrchestratorDep,
+    analysis_queue:List[ImageAnalysisQueueInput]
+) -> List[ImageResult]:
+    """
+    Merged scenario analysis that combines screenshot-analysis, context-build, and scenario-analysis.
+    
+    This optimized flow:
+    1. Takes all parsed screenshots (already done)
+    2. Builds unified context from all dialogs
+    3. Performs scenario analysis with full context
+    
+    Args:
+        request: PredictRequest with user info
+        orchestrator: Orchestrator service
+        analysis_queue: Queue of (resources, dialogs, image_results) tuples
+    
+    Returns:
+        List of ImageResult with scenario field populated
+    """
+    try:
+        logger.info("Merged scenario analysis requested, calling Orchestrator with unified context")
+        results = []
+        
+        for resources, dialog, list_image_result in analysis_queue:
+            logger.info(f"Processing {len(resources)} resources with {len(dialog)} dialog items")
+            
+            # Format dialogs as conversation history
+            conversation = []
+            for dialog_item in dialog:
+                conversation.append({
+                    "speaker": dialog_item.speaker if dialog_item.speaker in ["user", "unknown", "self"] else "talker",
+                    "text": dialog_item.text,
+                })
+            
+            logger.info(f'Unified conversation: {len(conversation)} messages')
+            
+            # Call Orchestrator with unified context (resources list instead of single resource)
+            if orchestrator is not None:
+                from app.models.api import GenerateReplyRequest
+                
+                orchestrator_request = GenerateReplyRequest(
+                    user_id=request.user_id,
+                    target_id="unknown",
+                    conversation_id=request.session_id,
+                    resources=resources,  # Pass all resources for unified context
+                    dialogs=conversation,
+                    language=request.language,
+                    quality="normal",
+                    persona=request.other_properties.lower(),
+                    scene=request.scene,
+                )
+
+                # Single orchestrator call with merged context
+                scenario_analysis_result = await orchestrator.scenario_analysis(orchestrator_request)
+                
+                scenario_json = {
+                    "current_scenario": scenario_analysis_result.current_scenario,
+                    "recommended_scenario": scenario_analysis_result.recommended_scenario,
+                    "recommended_strategies": scenario_analysis_result.recommended_strategies,
+                }
+                
+                # Apply same scenario result to all images in this group
+                for image_result in list_image_result:
+                    image_result.scenario = json.dumps(scenario_json, ensure_ascii=False)
+                    results.append(image_result)
+            else:
+                logger.warning("Orchestrator not available, skipping scenario analysis")
+        
+        logger.info(f"Merged scenario analysis completed for {len(results)} images")
+        return results
+        
+    except Exception as e:
+        logger.error(f"Merged scenario analysis failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Merged scenario analysis failed: {e}")
 
 
 async def _generate_reply(
@@ -528,8 +700,30 @@ async def handle_image(
     metrics: MetricsCollectorDep,
     cache_service: SessionCategorizedCacheServiceDep,
 ) -> PredictResponse:
-    # Process each content item (image URL)
-
+    """
+    Handle image processing with optional merge_step optimization.
+    
+    Flow depends on USE_MERGE_STEP configuration:
+    
+    Traditional flow (USE_MERGE_STEP=false):
+    1. Parse all screenshots separately (screenshot-analysis)
+    2. Build unified context from all dialogs (context-build)
+    3. Perform scenario analysis with full context (scenario-analysis)
+    4. Optionally generate replies
+    
+    Merge step flow (USE_MERGE_STEP=true):
+    1. Use merge_step for each screenshot (combines parsing, context, scenario)
+    2. Optionally generate replies
+    """
+    # Check if merge_step is enabled
+    use_merge_step = settings.use_merge_step
+    
+    if use_merge_step:
+        logger.info("Using merge_step optimized flow")
+    else:
+        logger.info("Using traditional separate flow")
+    
+    # Step 1: Process all screenshots
     items: list[tuple[Literal["image", "text"], str, ImageResult]] = []
     for content_url in request.content:
         try:
@@ -556,27 +750,39 @@ async def handle_image(
             trace_logger.log_event({
                 "level": "debug",
                 "type": "screenshot_start",
-                "task_type": "screenshot_parse",
+                "task_type": "merge_step" if use_merge_step else "screenshot_parse",
                 "url": content_url,
                 "session_id": request.session_id,
                 "user_id": request.user_id,
             })
             
-            image_result = await get_screenshot_analysis_result(
-                content_url,
-                request.language,
-                request.session_id,
-                request.scene,
-                cache_service,
-                screenshot_parser,
-            )
+            # Choose flow based on configuration
+            if use_merge_step:
+                # Use merge_step optimized flow
+                image_result, scenario_json = await get_merge_step_analysis_result(
+                    content_url,
+                    request,
+                    orchestrator,
+                    cache_service,
+                )
+            else:
+                # Use traditional separate flow
+                image_result = await get_screenshot_analysis_result(
+                    content_url,
+                    request.language,
+                    request.session_id,
+                    request.scene,
+                    cache_service,
+                    screenshot_parser,
+                )
+            
             screenshot_duration_ms = int((time.time() - screenshot_start) * 1000)
             
             # Log screenshot analysis end with trace
             trace_logger.log_event({
                 "level": "debug",
                 "type": "screenshot_end",
-                "task_type": "screenshot_parse",
+                "task_type": "merge_step" if use_merge_step else "screenshot_parse",
                 "url": content_url,
                 "session_id": request.session_id,
                 "user_id": request.user_id,
@@ -647,13 +853,83 @@ async def handle_image(
                     results=[],
                 )
 
-
+    # If merge_step is enabled and we have results, return them directly
+    if use_merge_step and items:
+        # Extract results from items
+        results = [item_result for _, _, item_result in items]
+        
+        # Handle reply generation if requested
+        suggested_replies: list[str] = []
+        if request.reply:
+            # Build analysis queue for reply generation
+            current_content_keys = []
+            current_dialogs = []
+            current_ImageResultList = []
+            analysis_queue:List[ImageAnalysisQueueInput] = []
+            
+            for kind, item_key, item_result in items:
+                if kind == "image":
+                    if current_content_keys or current_dialogs or current_ImageResultList:
+                        analysis_queue.append((
+                            deepcopy(current_content_keys),
+                            deepcopy(current_dialogs),
+                            deepcopy(current_ImageResultList),
+                        ))
+                        current_content_keys = []
+                        current_dialogs = []
+                        current_ImageResultList = []
+                    current_dialogs = current_dialogs + item_result.dialogs
+                    current_ImageResultList.append(item_result)
+                    current_content_keys.append(item_key)
+                else:
+                    current_dialogs = current_dialogs + item_result.dialogs
+                    current_ImageResultList.append(item_result)
+                    current_content_keys.append(item_key)
+            
+            if current_content_keys or current_dialogs or current_ImageResultList:
+                analysis_queue.append((
+                    deepcopy(current_content_keys),
+                    deepcopy(current_dialogs),
+                    deepcopy(current_ImageResultList),
+                ))
+            
+            reply_start = time.time()
+            suggested_replies = await _generate_reply(
+                request,
+                orchestrator,
+                analysis_queue,
+            )
+            reply_duration_ms = int((time.time() - reply_start) * 1000)
+            logger.info(f"Reply generation completed in {reply_duration_ms}ms")
+        
+        # Record successful request
+        duration_ms = int((time.time() - start_time) * 1000)
+        metrics.record_request("predict", 200, duration_ms)
+        
+        logger.info(f"merge_step flow completed in {duration_ms}ms")
+        
+        return PredictResponse(
+            success=True,
+            message="成功",
+            user_id=request.user_id,
+            request_id=request.request_id,
+            session_id=request.session_id,
+            scene=request.scene,
+            results=results,
+            suggested_replies=suggested_replies,
+        )
+    
+    # Traditional flow continues below
+    # Step 2: Build unified analysis queue with merged context
+    # Group consecutive text items with the next image, or create separate groups for images
     current_content_keys = []
     current_dialogs = []
     current_ImageResultList = []
     analysis_queue:List[ImageAnalysisQueueInput] = []
+    
     for kind, item_key, item_result in items:
         if kind == "image":
+            # When we hit an image, finalize any pending group and start a new one
             if current_content_keys or current_dialogs or current_ImageResultList:
                 analysis_queue.append((
                     deepcopy(current_content_keys),
@@ -664,34 +940,39 @@ async def handle_image(
                 current_dialogs = []
                 current_ImageResultList = []
 
+            # Add image to current group
             current_dialogs = current_dialogs + item_result.dialogs
             current_ImageResultList.append(item_result)
             current_content_keys.append(item_key)
             continue
 
+        # Text items accumulate until we hit an image
         current_dialogs = current_dialogs + item_result.dialogs
         current_ImageResultList.append(item_result)
         current_content_keys.append(item_key)
+    
+    # Don't forget the last group
     if current_content_keys or current_dialogs or current_ImageResultList:
         analysis_queue.append((
                 deepcopy(current_content_keys),
                 deepcopy(current_dialogs),
                 deepcopy(current_ImageResultList),
             ))
+    
     results = []
-    # If only scene analysis is requested
+    # Step 3: Perform merged scenario analysis if requested
     if request.scene_analysis and items:
         scenario_start = time.time()
-        results = await _scenario_analysis(
+        results = await _merged_scenario_analysis(
             request,
             orchestrator,
             analysis_queue,
         )
         scenario_duration_ms = int((time.time() - scenario_start) * 1000)
-        logger.info(f"Scenario analysis completed in {scenario_duration_ms}ms")
+        logger.info(f"Merged scenario analysis completed in {scenario_duration_ms}ms")
     
     suggested_replies: list[str] = []
-    # If reply generation is requested, call Orchestrator
+    # Step 4: Generate replies if requested
     if request.reply and items:
         reply_start = time.time()
         suggested_replies = await _generate_reply(
@@ -705,249 +986,10 @@ async def handle_image(
     # Record successful request
     duration_ms = int((time.time() - start_time) * 1000)
     metrics.record_request("predict", 200, duration_ms)
-    logger.info(f'result scenario:{results[0].scenario}')
-    # Return successful response
-    return PredictResponse(
-        success=True,
-        message="成功",
-        user_id=request.user_id,
-        request_id=request.request_id,
-        session_id=request.session_id,
-        scene=request.scene,
-        results=results,
-        suggested_replies=suggested_replies,
-    )
-
-
-async def handle_image_old(
-    request: PredictRequest,
-    screenshot_parser: ScreenshotParserDep,
-    orchestrator: OrchestratorDep,
-    start_time: float,
-    metrics: MetricsCollectorDep,
-    cache_service: SessionCategorizedCacheServiceDep,
-) -> PredictResponse:
-    # Process each content item (image URL)
-
-    results_dict = {}
-    for content_url in request.content:
-        try:
-            logger.info(f"Processing content: {content_url}")
-            if not _is_url(content_url):
-                results_dict[content_url] = [
-                    "text",
-                    ImageResult(
-                        content=content_url,
-                        dialogs=[
-                            DialogItem(
-                                position=[0.0, 0.0, 0.0, 0.0],
-                                text=content_url,
-                                speaker="",
-                                from_user=False,
-                            )
-                        ],
-                    ),
-                ]
-                continue
-            image_result = await get_screenshot_analysis_result(
-                content_url,
-                request.language,
-                request.session_id,
-                request.scene,
-                cache_service,
-                screenshot_parser,
-            )
-            logger.info(f"Image result: {type(image_result)}")
-            logger.info(f"Content processed successfully: {len(image_result.dialogs)} dialogs extracted")
-     
-            await cache_service.append_event(
-                session_id=request.session_id,
-                category="image_result",
-                resource=content_url,
-                payload=image_result.model_dump(mode="json"),
-                scene=request.scene,
-            )
-            results_dict[content_url] = ["image", image_result]
-        except Exception as e:
-            error_msg = str(e)
-            
-            # Determine error type and handle accordingly
-            if (
-                isinstance(e, LLMAdapterError)
-                or "model unavailable" in error_msg.lower()
-                or "provider not configured" in error_msg.lower()
-                or "all providers failed" in error_msg.lower()
-                or "not available" in error_msg.lower()
-            ):
-                # Requirement 7.1: Handle model unavailable errors (HTTP 401)
-                logger.error(f"Model unavailable for {content_url}: {e}")
-                metrics.record_request("predict", 401, int((time.time() - start_time) * 1000))
-                
-                raise HTTPException(
-                    status_code=401,
-                    detail="Model Unavailable",
-                )
-            
-            elif "load" in error_msg.lower() or "download" in error_msg.lower():
-                # Requirement 7.2: Handle image load errors (HTTP 400)
-                logger.error(f"Image load failed for {content_url}: {e}")
-                metrics.record_request("predict", 400, int((time.time() - start_time) * 1000))
-                
-                return PredictResponse(
-                    success=False,
-                    message=f"Load image failed: {str(e)}",
-                    user_id=request.user_id,
-                    request_id=request.request_id,
-                    session_id=request.session_id,
-                    scene=request.scene,
-                    results=[],
-                )
-            
-            else:
-                # Requirement 7.3: Handle inference errors (HTTP 500)
-                logger.error(f"Inference failed for {content_url}: {e}", exc_info=True)
-                metrics.record_request("predict", 500, int((time.time() - start_time) * 1000))
-                
-                return PredictResponse(
-                    success=False,
-                    message=f"Inference error: {str(e)}",
-                    user_id=request.user_id,
-                    request_id=request.request_id,
-                    session_id=request.session_id,
-                    scene=request.scene,
-                    results=[],
-                )
-
-        
-    # Initialize suggested_replies as None
-    suggested_replies = None
-    current_scenario = None
-    recommended_scenario = None
-    recommended_strategies = None
-
-    text_dialogs = []
-    talker_nickname = ""
-    current_content_keys = []
-    current_dialogs = []
-    for key, values in results_dict.items():
-        if values[0] == "image":
-            current_dialogs = current_dialogs + values[1].dialogs
-            current_content_keys.append(key)
-        elif values[0] == "text":
-            current_dialogs = current_dialogs + values[1].dialogs
-            current_content_keys.append(key)
-    results = []
-    # If only scene analysis is requested
-    if request.scene_analysis and results_dict:
-        try:
-            logger.info("Scene analysis requested, calling Orchestrator")
-
-            for url_index, _image_result in enumerate(list(results_dict.values())):
-                dialog = _image_result[1].dialogs
-                logger.info(f"Dialog: {dialog}")
-                # Requirement 9.2: Format dialogs as conversation history
-                conversation = []
-                for dialog_item in dialog:
-                    conversation.append({
-                        "speaker": dialog_item.speaker,
-                        "text": dialog_item.text,
-                    })
-                
-                logger.info(f'conversation:{conversation}')
-                # Requirement 9.3: Call Orchestrator with user_id, conversation, language
-                if orchestrator is not None:
-                    from app.models.api import GenerateReplyRequest
-                    
-                    orchestrator_request = GenerateReplyRequest(
-                        user_id=request.user_id,
-                        target_id="unknown",  # Not available from screenshot, use placeholder
-                        conversation_id=request.session_id,
-                        resource=request.content[url_index],
-                        dialogs=conversation,
-                        language=request.language,
-                        quality="normal",
-                        persona=request.other_properties,
-                        scene=request.scene,
-                    )
-
-                    scenario_analysis_result = await orchestrator.scenario_analysis(orchestrator_request)
-                    # current_scenario: str = ""  # 当前情景（安全/低风险策略|平衡/中风险策略|高风险/高回报策略|关系修复策略|禁止的策略）
-                    # recommended_scenario: str = ""  # 推荐情景
-                    # recommended_strategies: list[str] = Field(default_factory=list)  # 推荐的对话策略（3个策略代码）
-                    results.append(_image_result[1])
-                    results[-1].scenario = (
-                        f"current scenario:{scenario_analysis_result.current_scenario}, "
-                        f"recommended scenario:{scenario_analysis_result.recommended_scenario}, "
-                        f"recommended strategies:{scenario_analysis_result.recommended_strategies}"
-                    )
-                else:
-                    logger.warning("Orchestrator not available, skipping reply generation")
-            
-        except Exception as e:
-            # Requirement 9.5: Handle Orchestrator failures gracefully
-            logger.error(f"Reply generation failed: {e}", exc_info=True)
-            # Continue without replies - don't fail the entire request
-
-    # If reply generation is requested, call Orchestrator
-    if request.reply and results_dict:
-        try:
-            logger.info("Reply generation requested, calling Orchestrator")
-            
-            for url_index, _image_result in enumerate(list(results_dict.values())):
-                dialog = _image_result[1].dialogs
-                logger.info(f"Dialog: {dialog}")
-                # Requirement 9.2: Format dialogs as conversation history
-                conversation = []
-                for dialog_item in dialog:
-                    conversation.append({
-                        "speaker": dialog_item.speaker,
-                        "text": dialog_item.text,
-                    })
-                
-                logger.info(f'conversation:{conversation}')
-                # Requirement 9.3: Call Orchestrator with user_id, conversation, language
-                if orchestrator is not None:
-                    from app.models.api import GenerateReplyRequest
-                    
-                    orchestrator_request = GenerateReplyRequest(
-                        user_id=request.user_id,
-                        target_id="unknown",  # Not available from screenshot, use placeholder
-                        conversation_id=request.session_id,
-                        resource=request.content[url_index],
-                        dialogs=conversation,
-                        language=request.language,
-                        quality="normal",
-                        persona=request.other_properties,
-                        scene=request.scene,
-                    )
-
-                    orchestrator_response = await orchestrator.generate_reply(orchestrator_request)
-                    # Requirement 9.4: Include suggested_replies in response if successful
-                    if orchestrator_response and hasattr(orchestrator_response, "reply_text"):
-                        try:
-                            logger.info(f"Orchestrator response: {orchestrator_response.reply_text}")
-                            reply_text = json.loads(orchestrator_response.reply_text)
-                            if isinstance(reply_text, dict):
-                                suggested_reply_items = reply_text.get("replies", [])
-                                suggested_replies = [item.get("text", "") for item in suggested_reply_items]
-                            else:
-                                suggested_replies = []
-                        except Exception as exc:
-                            suggested_replies = []
-                            raise ValueError("Failed to parse reply text as JSON") from exc
-                    logger.info(f"Reply generation successful: {len(suggested_replies)} replies")
-                else:
-                    logger.warning("Orchestrator not available, skipping reply generation")
-            
-        except Exception as e:
-            # Requirement 9.5: Handle Orchestrator failures gracefully
-            logger.error(f"Reply generation failed: {e}", exc_info=True)
-            # Continue without replies - don't fail the entire request
-
-    # Record successful request
-    duration_ms = int((time.time() - start_time) * 1000)
-    metrics.record_request("predict", 200, duration_ms)
-
+    
+    if results:
+        logger.info(f'result scenario:{results[0].scenario}')
+    
     # Return successful response
     return PredictResponse(
         success=True,

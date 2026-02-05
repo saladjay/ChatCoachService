@@ -156,6 +156,9 @@ class AppConfig(BaseSettings):
     no_intimacy_check: bool = False  # Disable intimacy check if True
     log_failed_json_replies: bool = False  # Log failed JSON parsing replies to file
     
+    # Merge Step Configuration
+    use_merge_step: bool = False  # Enable merge_step optimized flow if True
+    
     # API settings
     api_prefix: str = "/api/v1"
     

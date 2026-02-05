@@ -196,6 +196,208 @@ class Orchestrator:
                 original_error=e,
             ) from e
 
+    async def merge_step_analysis(
+        self,
+        request: GenerateReplyRequest,
+        image_base64: str,
+        image_width: int,
+        image_height: int,
+    ) -> tuple[ContextResult, SceneAnalysisResult]:
+        """
+        Perform merged analysis using merge_step prompt.
+        
+        This function combines screenshot parsing, context building, and scenario analysis
+        into a single LLM call for improved performance.
+        
+        Flow: Single LLM call → Parse output → Apply strategy selection → Cache results
+        
+        Args:
+            request: GenerateReplyRequest with user info
+            image_base64: Base64-encoded screenshot image
+            image_width: Image width in pixels
+            image_height: Image height in pixels
+            
+        Returns:
+            Tuple of (ContextResult, SceneAnalysisResult)
+            
+        Raises:
+            QuotaExceededError: If user quota is exceeded
+            OrchestrationError: For other orchestration failures
+        """
+        if not await self.billing_service.check_quota(request.user_id):
+            logger.warning(f"Quota exceeded for user {request.user_id}")
+            raise QuotaExceededError(
+                message=f"User {request.user_id} has exceeded their quota",
+                user_id=request.user_id,
+            )
+        
+        # Initialize execution context
+        exec_ctx = ExecutionContext(
+            user_id=request.user_id,
+            conversation_id=request.conversation_id,
+            quality=request.quality,
+        )
+        
+        try:
+            # Check cache first using traditional field names for cache sharing
+            cached_context = await self._get_cached_payload(request, "context_analysis")
+            cached_scene = await self._get_cached_payload(request, "scene_analysis")
+            
+            if cached_context and cached_scene:
+                logger.info("Using cached merge_step results (from traditional cache)")
+                context = ContextResult(**cached_context)
+                scene = SceneAnalysisResult(**cached_scene)
+                return context, scene
+            
+            # No cache, perform merge_step analysis
+            logger.info("Performing merge_step analysis with LLM")
+            
+            # Get merge_step prompt
+            from app.services.prompt_manager import get_prompt_manager, PromptType, PromptVersion
+            pm = get_prompt_manager()
+            prompt = pm.get_prompt_version(PromptType.MERGE_STEP, PromptVersion.V1_ORIGINAL)
+            
+            if not prompt:
+                logger.error("merge_step prompt not found, falling back to separate calls")
+                raise ValueError("merge_step prompt not available")
+            
+            # Call LLM with merge_step prompt
+            from app.services.llm_adapter import create_llm_adapter, LLMCall
+            llm_adapter = create_llm_adapter()
+            
+            step_id = uuid.uuid4().hex
+            llm_start_time = time.time()
+            
+            trace_logger.log_event({
+                "level": "debug",
+                "type": "step_start",
+                "step_id": step_id,
+                "step_name": "merge_step_llm",
+                "task_type": "merge_step",
+                "session_id": request.conversation_id,
+                "user_id": request.user_id,
+            })
+            
+            # Call multimodal LLM
+            from app.services.image_fetcher import ImageFetcher
+            from app.services.llm_adapter import MultimodalLLMClient
+            
+            llm_client = MultimodalLLMClient()
+            
+            # Log prompt if enabled
+            if trace_logger.should_log_prompt():
+                trace_logger.log_event({
+                    "level": "debug",
+                    "type": "llm_prompt",
+                    "step_id": step_id,
+                    "step_name": "merge_step_llm",
+                    "task_type": "merge_step",
+                    "session_id": request.conversation_id,
+                    "user_id": request.user_id,
+                    "prompt": prompt,
+                    "image_size": f"{image_width}x{image_height}",
+                })
+            
+            llm_response = await llm_client.call(
+                prompt=prompt,
+                image_base64=image_base64,
+            )
+            
+            llm_duration_ms = int((time.time() - llm_start_time) * 1000)
+            
+            # Log response
+            trace_logger.log_event({
+                "level": "debug",
+                "type": "step_end",
+                "step_id": step_id,
+                "step_name": "merge_step_llm",
+                "task_type": "merge_step",
+                "session_id": request.conversation_id,
+                "user_id": request.user_id,
+                "duration_ms": llm_duration_ms,
+                "provider": llm_response.provider,
+                "model": llm_response.model,
+                "cost_usd": llm_response.cost_usd,
+                "input_tokens": llm_response.input_tokens,
+                "output_tokens": llm_response.output_tokens,
+            })
+            
+            # Log response text if prompt logging is enabled
+            if trace_logger.should_log_prompt():
+                trace_logger.log_event({
+                    "level": "debug",
+                    "type": "llm_response",
+                    "step_id": step_id,
+                    "step_name": "merge_step_llm",
+                    "task_type": "merge_step",
+                    "session_id": request.conversation_id,
+                    "user_id": request.user_id,
+                    "response": llm_response.raw_text[:1000] if llm_response.raw_text else "",  # Truncate for log size
+                })
+            
+            logger.info(
+                f"merge_step LLM call successful: "
+                f"provider={llm_response.provider}, "
+                f"model={llm_response.model}, "
+                f"cost=${llm_response.cost_usd:.4f}, "
+                f"duration={llm_duration_ms}ms"
+            )
+            
+            # Parse and convert output using adapter
+            from app.services.merge_step_adapter import MergeStepAdapter
+            adapter = MergeStepAdapter()
+            
+            # Validate output
+            if not adapter.validate_merge_output(llm_response.parsed_json):
+                raise ValueError("Invalid merge_step output structure")
+            
+            # Convert to ContextResult
+            dialogs = request.dialogs
+            context = adapter.to_context_result(llm_response.parsed_json, dialogs)
+            
+            # Convert to SceneAnalysisResult (without strategies yet)
+            scene = adapter.to_scene_analysis_result(llm_response.parsed_json)
+            
+            # Apply strategy selection based on recommended_scenario
+            from app.services.strategy_selector import get_strategy_selector
+            strategy_selector = get_strategy_selector()
+            
+            recommended_scenario = scene.recommended_scenario
+            selected_strategies = strategy_selector.select_strategies(
+                scenario=recommended_scenario,
+                count=3
+            )
+            
+            # Update scene with selected strategies
+            scene.recommended_strategies = selected_strategies
+            
+            logger.info(
+                f"Selected strategies for scenario '{recommended_scenario}': {selected_strategies}"
+            )
+            
+            # Cache results using traditional field names for cache sharing
+            await self._append_cache_event(
+                request,
+                "context_analysis",  # Use traditional field name
+                context.model_dump(mode="json")
+            )
+            await self._append_cache_event(
+                request,
+                "scene_analysis",  # Use traditional field name
+                scene.model_dump(mode="json")
+            )
+            
+            logger.info("merge_step analysis completed and cached")
+            
+            return context, scene
+            
+        except Exception as e:
+            logger.exception(f"merge_step analysis error: {e}")
+            raise OrchestrationError(
+                message="An error occurred during merge_step analysis",
+                original_error=e,
+            ) from e
+
     async def prepare_generate_reply(
         self,
         request: GenerateReplyRequest

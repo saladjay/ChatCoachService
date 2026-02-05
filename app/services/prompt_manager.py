@@ -38,6 +38,7 @@ class PromptType(Enum):
     TRAIT_MAPPING = "trait_mapping"
     SCREENSHOT_PARSE = "screenshot_parse"
     PREFERENCE_ANALYSIS = "preference_analysis"
+    MERGE_STEP = "merge_step"
 
 
 @dataclass
