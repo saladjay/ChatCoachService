@@ -437,9 +437,9 @@ class ServiceContainer:
         """Create ImageFetcher for screenshot parsing.
         
         Returns:
-            ImageFetcher instance.
+            ImageFetcher instance with compression enabled (max dimension: 800px).
         """
-        return ImageFetcher(timeout=30.0)
+        return ImageFetcher(timeout=30.0, max_dimension=800)
 
     def _create_prompt_manager(self) -> PromptManager:
         """Create PromptManager for prompt version management.
