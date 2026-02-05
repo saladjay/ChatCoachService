@@ -126,33 +126,36 @@ class LLMAdapterReplyGenerator(BaseReplyGenerator):
         try:
             text = result.text.strip()
             
-            # 处理 markdown 代码块
+            # Remove markdown code blocks if present
             if "```json" in text:
                 start = text.find("```json") + 7
                 end = text.find("```", start)
-                text = text[start:end].strip()
+                if end > start:
+                    text = text[start:end].strip()
             elif "```" in text:
                 start = text.find("```") + 3
                 end = text.find("```", start)
-                text = text[start:end].strip()
+                if end > start:
+                    text = text[start:end].strip()
             
-            # 提取 JSON 对象
+            # Extract JSON object if there's extra text
             if "{" in text:
                 start = text.find("{")
                 end = text.rfind("}") + 1
-                text = text[start:end]
+                if end > start:
+                    text = text[start:end]
             
-            # 解析紧凑 JSON
+            # Parse compact JSON
             data = json.loads(text)
             compact = ReplyGenerationCompact(**data)
             
-            # 使用 SchemaExpander 扩展
+            # Use SchemaExpander to expand
             expanded = SchemaExpander.expand_reply_generation(compact)
             
-            # 转换回 JSON 字符串
+            # Convert back to JSON string
             expanded_json = json.dumps(expanded, ensure_ascii=False, indent=2)
             
-            # 创建新的 LLMResult
+            # Create new LLMResult
             return LLMResult(
                 text=expanded_json,
                 model=result.model,
@@ -162,6 +165,15 @@ class LLMAdapterReplyGenerator(BaseReplyGenerator):
                 cost_usd=result.cost_usd,
             )
             
-        except (json.JSONDecodeError, ValueError, Exception) as e:
-            # 解析失败，返回原始结果
+        except (json.JSONDecodeError, ValueError) as e:
+            # Parse failed, log and return original result
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(f"Failed to expand compact result: {e}. Returning original result.")
+            return result
+        except Exception as e:
+            # Unexpected error, log and return original result
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"Unexpected error expanding compact result: {e}", exc_info=True)
             return result

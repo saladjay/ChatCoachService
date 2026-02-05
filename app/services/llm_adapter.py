@@ -302,40 +302,70 @@ class MultimodalLLMClient:
 
         self._registered_providers: dict[str, Any] = {}
 
-        try:
-            default_provider = self._config_manager.get_default_provider()
-        except Exception:
-            default_provider = "openrouter"
-
-        provider_priority = [default_provider, "gemini", "dashscope", "openrouter", "openai"]
-        seen: set[str] = set()
-        ordered_providers: list[str] = []
-        for p in provider_priority:
-            if p and p not in seen:
-                ordered_providers.append(p)
-                seen.add(p)
-
-        last_error: Exception | None = None
-        for provider_name in ordered_providers:
+        # Check for environment variable override
+        import os
+        env_multimodal_provider = os.environ.get("MULTIMODAL_DEFAULT_PROVIDER")
+        
+        if env_multimodal_provider:
+            # Environment variable specified, try to use it first
             try:
-                provider_config = self._config_manager.get_provider_config(provider_name)
+                provider_config = self._config_manager.get_provider_config(env_multimodal_provider)
                 multimodal_model = provider_config.models.multimodal
-                if not multimodal_model:
-                    continue
-
-                api_key = (provider_config.api_key or "").strip()
-                if not api_key:
-                    continue
-
-                self._provider = provider_name
-                self._model = multimodal_model
-                break
+                if multimodal_model:
+                    api_key = (provider_config.api_key or "").strip()
+                    if api_key or env_multimodal_provider == "gemini":  # Gemini vertex mode doesn't need API key
+                        self._provider = env_multimodal_provider
+                        self._model = multimodal_model
+                        import logging
+                        logger = logging.getLogger(__name__)
+                        logger.info(
+                            f"Using multimodal provider from environment variable: "
+                            f"{env_multimodal_provider} (model: {multimodal_model})"
+                        )
             except Exception as e:
-                last_error = e
-                continue
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.warning(
+                    f"Failed to use MULTIMODAL_DEFAULT_PROVIDER={env_multimodal_provider}: {e}. "
+                    f"Falling back to default provider selection."
+                )
+        
+        # If not set by environment variable, use default logic
+        if not self._provider or not self._model:
+            try:
+                default_provider = self._config_manager.get_default_provider()
+            except Exception:
+                default_provider = "openrouter"
 
-        if last_error is not None and (not self._provider or not self._model):
-            raise RuntimeError(f"Failed to load multimodal configuration: {last_error}")
+            provider_priority = [default_provider, "gemini", "dashscope", "openrouter", "openai"]
+            seen: set[str] = set()
+            ordered_providers: list[str] = []
+            for p in provider_priority:
+                if p and p not in seen:
+                    ordered_providers.append(p)
+                    seen.add(p)
+
+            last_error: Exception | None = None
+            for provider_name in ordered_providers:
+                try:
+                    provider_config = self._config_manager.get_provider_config(provider_name)
+                    multimodal_model = provider_config.models.multimodal
+                    if not multimodal_model:
+                        continue
+
+                    api_key = (provider_config.api_key or "").strip()
+                    if not api_key and provider_name != "gemini":  # Gemini vertex mode doesn't need API key
+                        continue
+
+                    self._provider = provider_name
+                    self._model = multimodal_model
+                    break
+                except Exception as e:
+                    last_error = e
+                    continue
+
+            if last_error is not None and (not self._provider or not self._model):
+                raise RuntimeError(f"Failed to load multimodal configuration: {last_error}")
 
         if not self._provider or not self._model:
             raise RuntimeError(
@@ -424,9 +454,17 @@ class MultimodalLLMClient:
         provider: str,
         model: str,
     ) -> dict:
+        # Special handling for Gemini provider
+        if provider == "gemini":
+            return await self._call_gemini_vision(prompt, image_base64, model)
+        
+        # Default: OpenAI-compatible API
         provider_config = self._config_manager.get_provider_config(provider)
         api_key = provider_config.api_key
         base_url = provider_config.base_url
+
+        if not base_url:
+            raise RuntimeError(f"Provider '{provider}' requires 'base_url' in configuration")
 
         payload = {
             "model": model,
@@ -507,6 +545,150 @@ class MultimodalLLMClient:
             "output_tokens": output_tokens,
             "cost_usd": cost_usd,
         }
+
+    async def _call_gemini_vision(
+        self,
+        prompt: str,
+        image_base64: str,
+        model: str,
+    ) -> dict:
+        """Call Gemini vision API using GeminiAdapter with SDK/Vertex support."""
+        from llm_adapter.adapters import GeminiAdapter
+        
+        provider_config = self._config_manager.get_provider_config("gemini")
+        
+        # Build adapter kwargs
+        kwargs = {}
+        if hasattr(provider_config, 'mode') and provider_config.mode:
+            kwargs['mode'] = provider_config.mode
+        if hasattr(provider_config, 'project_id') and provider_config.project_id:
+            kwargs['project_id'] = provider_config.project_id
+        if hasattr(provider_config, 'location') and provider_config.location:
+            kwargs['location'] = provider_config.location
+        
+        # Create Gemini adapter
+        adapter = GeminiAdapter(api_key=provider_config.api_key, **kwargs)
+        
+        try:
+            # Gemini multimodal format: combine prompt and image in a single message
+            # Format: "prompt\n\n[Image data as base64]"
+            multimodal_prompt = f"{prompt}\n\nImage: data:image/jpeg;base64,{image_base64}"
+            
+            # For Gemini SDK/Vertex, we need to use their native multimodal format
+            if kwargs.get('mode') in ['sdk', 'vertex']:
+                result = await self._call_gemini_native_multimodal(
+                    adapter, prompt, image_base64, model, kwargs.get('mode')
+                )
+            else:
+                # HTTP mode - use text-only for now (Gemini HTTP multimodal needs different implementation)
+                result = await adapter.generate(multimodal_prompt, model)
+            
+            # Calculate cost
+            cost_usd = 0.0
+            if result.input_tokens and result.output_tokens:
+                try:
+                    cost_usd = self._llm_adapter.billing.calculate_cost(
+                        provider="gemini",
+                        model=model,
+                        input_tokens=result.input_tokens,
+                        output_tokens=result.output_tokens,
+                    )
+                except Exception:
+                    cost_usd = 0.0
+            
+            return {
+                "raw_text": result.text,
+                "provider": "gemini",
+                "model": model,
+                "input_tokens": result.input_tokens or 0,
+                "output_tokens": result.output_tokens or 0,
+                "cost_usd": cost_usd,
+            }
+        finally:
+            await adapter.aclose()
+
+    async def _call_gemini_native_multimodal(
+        self,
+        adapter,
+        prompt: str,
+        image_base64: str,
+        model: str,
+        mode: str,
+    ) -> Any:
+        """Call Gemini SDK/Vertex with native multimodal support."""
+        import asyncio
+        import base64
+        
+        # Decode base64 image
+        image_bytes = base64.b64decode(image_base64)
+        
+        if mode == 'sdk':
+            # Use google-generativeai SDK
+            def _sync_generate():
+                from PIL import Image
+                import io
+                
+                # Convert bytes to PIL Image
+                image = Image.open(io.BytesIO(image_bytes))
+                
+                # Call SDK with image
+                gen_model = adapter._genai.GenerativeModel(model)
+                return gen_model.generate_content([prompt, image])
+            
+            loop = asyncio.get_event_loop()
+            response = await loop.run_in_executor(None, _sync_generate)
+            
+            # Extract token usage
+            input_tokens = None
+            output_tokens = None
+            if hasattr(response, 'usage_metadata') and response.usage_metadata:
+                input_tokens = getattr(response.usage_metadata, 'prompt_token_count', None)
+                output_tokens = getattr(response.usage_metadata, 'candidates_token_count', None)
+            
+            # Create result object
+            class Result:
+                def __init__(self, text, input_tokens, output_tokens):
+                    self.text = text
+                    self.input_tokens = input_tokens
+                    self.output_tokens = output_tokens
+            
+            return Result(response.text, input_tokens, output_tokens)
+        
+        elif mode == 'vertex':
+            # Use Vertex AI SDK
+            def _sync_generate():
+                from vertexai.generative_models import GenerativeModel, Part
+                
+                # Create image part
+                image_part = Part.from_data(image_bytes, mime_type="image/jpeg")
+                
+                # Get or create model
+                vertex_model = adapter._get_vertex_model(model)
+                
+                # Call with prompt and image
+                return vertex_model.generate_content([prompt, image_part])
+            
+            loop = asyncio.get_event_loop()
+            response = await loop.run_in_executor(None, _sync_generate)
+            
+            # Extract token usage
+            input_tokens = None
+            output_tokens = None
+            if hasattr(response, 'usage_metadata') and response.usage_metadata:
+                input_tokens = getattr(response.usage_metadata, 'prompt_token_count', None)
+                output_tokens = getattr(response.usage_metadata, 'candidates_token_count', None)
+            
+            # Create result object
+            class Result:
+                def __init__(self, text, input_tokens, output_tokens):
+                    self.text = text
+                    self.input_tokens = input_tokens
+                    self.output_tokens = output_tokens
+            
+            return Result(response.text, input_tokens, output_tokens)
+        
+        else:
+            raise RuntimeError(f"Unsupported Gemini mode: {mode}")
 
     def _parse_json_response(self, raw_text: str) -> dict:
         try:

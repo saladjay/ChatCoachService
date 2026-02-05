@@ -8,3 +8,4 @@
 [submodule "core/chatcoachuserprofile"]
 	path = core/chatcoachuserprofile
 	url = git@gitlab.zhizitech.org:ai/chatcoachuserprofile.git
+	branch = main
