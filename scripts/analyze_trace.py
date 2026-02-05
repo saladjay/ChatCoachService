@@ -54,6 +54,7 @@ def extract_llm_calls(entries: List[Dict]) -> List[Dict]:
     prompts_by_call_id = {}
     versions_by_call_id = {}
     callers_by_call_id = {}
+    prompts_by_step_id = {}
     
     # First pass: collect prompts and versions from llm_call_start events
     for entry in entries:
@@ -66,6 +67,11 @@ def extract_llm_calls(entries: List[Dict]) -> List[Dict]:
                     "caller_module": entry.get("caller_module"),
                     "caller_func": entry.get("caller_func"),
                 }
+        # Also collect from step_start events (screenshot parser)
+        elif entry.get("type") == "step_start":
+            step_id = entry.get("step_id")
+            if step_id:
+                prompts_by_step_id[step_id] = entry.get("prompt", "")
     
     # Second pass: collect results from llm_call_end events
     for entry in entries:
@@ -92,6 +98,27 @@ def extract_llm_calls(entries: List[Dict]) -> List[Dict]:
                 "caller_module": caller_module,
                 "caller_func": caller_func,
                 "response": entry.get("text", "")
+            })
+        # Also collect from step_end events (screenshot parser)
+        elif entry.get("type") == "step_end":
+            step_id = entry.get("step_id")
+            prompt = prompts_by_step_id.get(step_id, "")
+            
+            llm_calls.append({
+                "timestamp": entry.get("ts"),
+                "task_type": entry.get("task_type"),
+                "provider": entry.get("provider"),
+                "model": entry.get("model"),
+                "input_tokens": entry.get("input_tokens", 0),
+                "output_tokens": entry.get("output_tokens", 0),
+                "total_tokens": entry.get("input_tokens", 0) + entry.get("output_tokens", 0),
+                "cost_usd": entry.get("cost_usd", 0),
+                "latency_ms": entry.get("duration_ms", 0),
+                "prompt": prompt,
+                "prompt_version": None,
+                "caller_module": entry.get("step_name"),
+                "caller_func": None,
+                "response": ""
             })
     
     return llm_calls
