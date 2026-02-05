@@ -24,6 +24,38 @@ if ($LASTEXITCODE -ne 0 -or -not $uvicornCheck) {
 }
 Write-Host "✓ uvicorn is installed" -ForegroundColor Green
 
+# Check and start Redis
+Write-Host "Checking Redis..." -ForegroundColor Yellow
+$redisCliPath = Get-Command redis-cli -ErrorAction SilentlyContinue
+if ($redisCliPath) {
+    $redisPing = redis-cli ping 2>$null
+    if ($redisPing -eq "PONG") {
+        Write-Host "✓ Redis is already running" -ForegroundColor Green
+    } else {
+        Write-Host "Starting Redis server..." -ForegroundColor Yellow
+        $redisServerPath = Get-Command redis-server -ErrorAction SilentlyContinue
+        if ($redisServerPath) {
+            # Start Redis in background
+            Start-Process -FilePath "redis-server" -ArgumentList "--port 6379" -WindowStyle Hidden
+            Start-Sleep -Seconds 2
+            $redisPing = redis-cli ping 2>$null
+            if ($redisPing -eq "PONG") {
+                Write-Host "✓ Redis started successfully" -ForegroundColor Green
+            } else {
+                Write-Host "Warning: Failed to start Redis" -ForegroundColor Yellow
+                Write-Host "Please start Redis manually: redis-server" -ForegroundColor Yellow
+            }
+        } else {
+            Write-Host "Warning: redis-server not found" -ForegroundColor Yellow
+            Write-Host "Please install Redis or start it manually" -ForegroundColor Yellow
+        }
+    }
+} else {
+    Write-Host "Warning: Redis not found" -ForegroundColor Yellow
+    Write-Host "Please install Redis from: https://github.com/microsoftarchive/redis/releases" -ForegroundColor Yellow
+    Write-Host "Or use WSL/Docker to run Redis" -ForegroundColor Yellow
+}
+
 # Check if .env file exists
 if (-not (Test-Path ".env")) {
     Write-Host "Warning: .env file not found" -ForegroundColor Yellow

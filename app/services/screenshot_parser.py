@@ -6,6 +6,8 @@ LLM invocation, and result normalization.
 """
 
 import logging
+import time
+import uuid
 from typing import Any
 
 from app.models.screenshot import (
@@ -19,6 +21,7 @@ from app.services.image_fetcher import ImageFetcher
 from app.services.llm_adapter import MultimodalLLMClient
 from app.services.prompt_manager import PromptManager, PromptType
 from app.services.result_normalizer import ResultNormalizer
+from app.observability.trace_logger import trace_logger
 
 
 logger = logging.getLogger(__name__)
@@ -128,11 +131,48 @@ class ScreenshotParserService:
             
             # Step 3: Call multimodal LLM (error code 1002, 1003)
             logger.info(f"[{session_id}] Calling multimodal LLM")
+            
+            # Generate step ID for trace logging
+            step_id = uuid.uuid4().hex
+            llm_start_time = time.time()
+            
+            # Log LLM call start with trace
+            trace_logger.log_event({
+                "level": "debug",
+                "type": "step_start",
+                "step_id": step_id,
+                "step_name": "screenshot_parse_llm",
+                "task_type": "screenshot_parse",
+                "session_id": session_id,
+                "prompt": prompt if trace_logger.should_log_prompt() else "[prompt logging disabled]",
+                "image_size": f"{fetched_image.width}x{fetched_image.height}",
+            })
+            
             try:
                 llm_response = await self.llm_client.call(
                     prompt=prompt,
                     image_base64=fetched_image.base64_data,
                 )
+                
+                llm_duration_ms = int((time.time() - llm_start_time) * 1000)
+                
+                # Log LLM call end with trace
+                trace_logger.log_event({
+                    "level": "debug",
+                    "type": "step_end",
+                    "step_id": step_id,
+                    "step_name": "screenshot_parse_llm",
+                    "task_type": "screenshot_parse",
+                    "session_id": session_id,
+                    "duration_ms": llm_duration_ms,
+                    "provider": llm_response.provider,
+                    "model": llm_response.model,
+                    "input_tokens": llm_response.input_tokens,
+                    "output_tokens": llm_response.output_tokens,
+                    "cost_usd": llm_response.cost_usd,
+                    "status": "success",
+                })
+                
                 logger.info(
                     f"[{session_id}] LLM call successful: "
                     f"provider={llm_response.provider}, "
@@ -141,7 +181,22 @@ class ScreenshotParserService:
                     f"cost=${llm_response.cost_usd:.4f}"
                 )
             except RuntimeError as e:
+                llm_duration_ms = int((time.time() - llm_start_time) * 1000)
                 error_msg = str(e)
+                
+                # Log LLM call error with trace
+                trace_logger.log_event({
+                    "level": "error",
+                    "type": "step_error",
+                    "step_id": step_id,
+                    "step_name": "screenshot_parse_llm",
+                    "task_type": "screenshot_parse",
+                    "session_id": session_id,
+                    "duration_ms": llm_duration_ms,
+                    "error": error_msg,
+                    "status": "failed",
+                })
+                
                 # Determine if it's a JSON parsing error (1003) or LLM call error (1002)
                 if "parse" in error_msg.lower() or "json" in error_msg.lower():
                     logger.error(f"[{session_id}] JSON parsing failed: {e}")
@@ -158,6 +213,21 @@ class ScreenshotParserService:
                         session_id=session_id,
                     )
             except Exception as e:
+                llm_duration_ms = int((time.time() - llm_start_time) * 1000)
+                
+                # Log unexpected error with trace
+                trace_logger.log_event({
+                    "level": "error",
+                    "type": "step_error",
+                    "step_id": step_id,
+                    "step_name": "screenshot_parse_llm",
+                    "task_type": "screenshot_parse",
+                    "session_id": session_id,
+                    "duration_ms": llm_duration_ms,
+                    "error": str(e),
+                    "status": "failed",
+                })
+                
                 logger.error(f"[{session_id}] Unexpected LLM error: {e}")
                 return self._create_error_response(
                     code=1002,

@@ -153,6 +153,8 @@ class AppConfig(BaseSettings):
     no_reply_cache: bool = True
     no_strategy_planner: bool = True
     no_persona_cache: bool = True
+    no_intimacy_check: bool = False  # Disable intimacy check if True
+    log_failed_json_replies: bool = False  # Log failed JSON parsing replies to file
     
     # API settings
     api_prefix: str = "/api/v1"

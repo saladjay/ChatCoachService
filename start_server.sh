@@ -34,6 +34,34 @@ if ! python -c "import uvicorn; print('ok')" > /dev/null 2>&1; then
 fi
 echo "✓ uvicorn is installed"
 
+# Check and start Redis
+echo "Checking Redis..."
+if command -v redis-cli > /dev/null 2>&1; then
+  if redis-cli ping > /dev/null 2>&1; then
+    echo "✓ Redis is already running"
+  else
+    echo "Starting Redis server..."
+    if command -v redis-server > /dev/null 2>&1; then
+      # Start Redis in background
+      redis-server --daemonize yes --port 6379
+      sleep 1
+      if redis-cli ping > /dev/null 2>&1; then
+        echo "✓ Redis started successfully"
+      else
+        echo "Warning: Failed to start Redis"
+        echo "Please start Redis manually: redis-server"
+      fi
+    else
+      echo "Warning: redis-server not found"
+      echo "Please install Redis or start it manually"
+    fi
+  fi
+else
+  echo "Warning: Redis not found"
+  echo "Please install Redis: sudo apt-get install redis-server (Ubuntu/Debian)"
+  echo "Or: brew install redis (macOS)"
+fi
+
 # Check if .env file exists
 if [ ! -f ".env" ]; then
     echo "Warning: .env file not found"
