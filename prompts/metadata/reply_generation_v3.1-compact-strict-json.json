@@ -1,0 +1,17 @@
+{
+  "version": "v3.1-compact-strict-json",
+  "created_date": "2026-02-05",
+  "description": "Improved version with stronger JSON format emphasis to prevent plain text responses",
+  "changes": [
+    "Added CRITICAL section with strong emphasis on JSON-only output",
+    "Provided complete JSON example with actual reply text",
+    "Explicitly warned against returning plain text like '好的，我明白了。'",
+    "Used warning emoji (⚠️) to draw attention",
+    "Repeated 'ONLY JSON' instruction multiple times"
+  ],
+  "based_on": "reply_generation_v3.0-compact",
+  "fixes": "Issue where LLM returns '好的，我明白了。' instead of JSON",
+  "task_type": "generation",
+  "quality_levels": ["normal", "high"],
+  "languages": ["en", "zh", "all"]
+}

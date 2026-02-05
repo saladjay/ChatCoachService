@@ -179,7 +179,7 @@ def test_step_end_filtering():
     
     trace_data = {
         "events": [
-            # step_end with LLM metadata (should be included)
+            # step_end with TOP-LEVEL LLM metadata (should be included)
             {
                 "ts": "2026-02-05T13:00:00.000000",
                 "type": "step_end",
@@ -201,7 +201,7 @@ def test_step_end_filtering():
                 "duration_ms": 100,
                 "result": {"pacing": "slow"}
             },
-            # step_end with LLM metadata in result (should be included)
+            # step_end with LLM metadata ONLY in result (should be filtered out to avoid double counting)
             {
                 "ts": "2026-02-05T13:00:02.000000",
                 "type": "step_end",
@@ -223,18 +223,17 @@ def test_step_end_filtering():
     
     print(f"\n✓ Extracted {len(llm_calls)} LLM calls from 3 step_end events")
     
-    # Should have 2 LLM calls (2 with LLM metadata, 1 without)
-    assert len(llm_calls) == 2, f"Expected 2 LLM calls, got {len(llm_calls)}"
-    print("✓ Correctly filtered out non-LLM step_end")
+    # Should have only 1 LLM call (only the one with top-level metadata)
+    assert len(llm_calls) == 1, f"Expected 1 LLM call, got {len(llm_calls)}"
+    print("✓ Correctly filtered out non-LLM step_end and wrapper step_end")
     
-    # Verify the included calls have correct metadata
+    # Verify the included call has correct metadata
     assert llm_calls[0]['provider'] == 'openai'
     assert llm_calls[0]['model'] == 'gpt-4'
-    print("✓ First call has correct metadata from top level")
-    
-    assert llm_calls[1]['provider'] == 'gemini'
-    assert llm_calls[1]['model'] == 'gemini-1.5-flash'
-    print("✓ Second call has correct metadata from result field")
+    print("✓ Call has correct metadata from top level")
+    print()
+    print("⚠️  Note: step_end with LLM metadata in 'result' field are now filtered out")
+    print("   to avoid double counting with llm_call_end events")
 
 
 def test_task_type_inference():

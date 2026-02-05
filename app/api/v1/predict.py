@@ -39,8 +39,11 @@ ImageAnalysisQueueInput = tuple[list[str], list[DialogItem], list[ImageResult]]
 def _log_failed_json_reply(reply_text: str, session_id: str, error_msg: str) -> None:
     """Log failed JSON reply to file for analysis.
     
+    This saves the COMPLETE raw response from LLM that failed to parse as JSON.
+    This is crucial for debugging why the LLM returned invalid JSON.
+    
     Args:
-        reply_text: The raw reply text that failed to parse
+        reply_text: The raw reply text that failed to parse (COMPLETE LLM response)
         session_id: Session ID for tracking
         error_msg: Error message from the exception
     """
@@ -53,33 +56,68 @@ def _log_failed_json_reply(reply_text: str, session_id: str, error_msg: str) -> 
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
         filename = log_dir / f"failed_reply_{timestamp}_{session_id[:8]}.json"
         
-        # Prepare log entry
+        # Prepare log entry with COMPLETE information
         log_entry = {
             "timestamp": datetime.now().isoformat(),
             "session_id": session_id,
             "error": error_msg,
-            "reply_text": reply_text,
-            "reply_length": len(reply_text),
+            "raw_text": reply_text,  # Complete raw text from LLM
+            "raw_text_length": len(reply_text),
+            "truncated_preview": reply_text[:500],  # Preview first 500 chars
+            "source": "generation_reply_parser",
         }
         
         # Write to file
         with open(filename, "w", encoding="utf-8") as f:
             json.dump(log_entry, f, indent=2, ensure_ascii=False)
         
-        logger.info(f"Failed JSON reply logged to: {filename}")
+        logger.warning(
+            f"Failed JSON reply saved to {filename}. "
+            f"Response length: {len(reply_text)} chars. "
+            f"Review this file to understand why JSON parsing failed."
+        )
         
     except Exception as e:
         logger.error(f"Failed to log failed JSON reply: {e}")
 
 
+def _wrap_plain_text_as_json(text: str) -> dict:
+    """Wrap plain text response as JSON for reply generation.
+    
+    This is a fallback when LLM returns plain text instead of JSON.
+    Common cases: "好的，我明白了。" or other acknowledgment text.
+    
+    Args:
+        text: Plain text response from LLM
+        
+    Returns:
+        JSON object with the text wrapped as a single reply
+    """
+    logger.warning(
+        f"LLM returned plain text instead of JSON. Wrapping as fallback. "
+        f"Text: {text[:100]}"
+    )
+    return {
+        "replies": [
+            {
+                "text": text.strip(),
+                "strategy": "direct_response",
+                "reasoning": "LLM returned plain text, wrapped automatically"
+            }
+        ]
+    }
+
+
 def parse_json_with_markdown(text: str) -> dict:
     """Parse JSON text that may be wrapped in markdown code blocks.
     
-    This function handles various formats:
-    - Plain JSON: {"key": "value"}
-    - Markdown JSON block: ```json\n{"key": "value"}\n```
-    - Markdown code block: ```\n{"key": "value"}\n```
-    - JSON with extra text: Some text {"key": "value"} more text
+    This function handles various formats with multiple fallback strategies:
+    1. Direct JSON parsing
+    2. Markdown code block extraction (```json ... ```)
+    3. Simple code block extraction (``` ... ```)
+    4. JSON object extraction from text
+    5. Stack-based complete JSON extraction (most reliable)
+    6. Plain text wrapping (final fallback for reply generation)
     
     Args:
         text: The text to parse
@@ -88,31 +126,120 @@ def parse_json_with_markdown(text: str) -> dict:
         Parsed JSON object
         
     Raises:
-        json.JSONDecodeError: If JSON cannot be parsed
+        json.JSONDecodeError: If JSON cannot be parsed after all attempts
     """
+    original_text = text
     text = text.strip()
     
-    # Remove markdown code blocks if present
+    # Strategy 1: Try direct JSON parsing
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+    
+    # Strategy 2: Remove markdown JSON code blocks
     if "```json" in text:
         start = text.find("```json") + 7
         end = text.find("```", start)
         if end > start:
-            text = text[start:end].strip()
-    elif "```" in text:
+            extracted = text[start:end].strip()
+            try:
+                return json.loads(extracted)
+            except json.JSONDecodeError:
+                pass
+    
+    # Strategy 3: Remove simple markdown code blocks
+    if "```" in text:
         start = text.find("```") + 3
         end = text.find("```", start)
         if end > start:
-            text = text[start:end].strip()
+            extracted = text[start:end].strip()
+            try:
+                return json.loads(extracted)
+            except json.JSONDecodeError:
+                pass
     
-    # Extract JSON object if there's extra text
+    # Strategy 4: Extract JSON object with simple regex
     if "{" in text:
         start = text.find("{")
         end = text.rfind("}") + 1
         if end > start:
-            text = text[start:end]
+            extracted = text[start:end]
+            try:
+                return json.loads(extracted)
+            except json.JSONDecodeError:
+                pass
     
-    # Parse JSON
-    return json.loads(text)
+    # Strategy 5: Use stack-based extraction (most reliable)
+    json_objects = _extract_complete_json_objects(text)
+    for json_str in json_objects:
+        try:
+            return json.loads(json_str)
+        except json.JSONDecodeError:
+            continue
+    
+    # Strategy 6: Final fallback - wrap plain text as JSON
+    # This handles cases where LLM returns acknowledgment text like "好的，我明白了。"
+    if original_text and len(original_text) < 500:  # Only wrap short responses
+        return _wrap_plain_text_as_json(original_text)
+    
+    # All strategies failed
+    raise json.JSONDecodeError(
+        f"Could not extract valid JSON from response after all attempts. "
+        f"Text preview: {original_text[:200]}...",
+        original_text,
+        0
+    )
+
+
+def _extract_complete_json_objects(text: str) -> list[str]:
+    """Extract all complete JSON objects from text using stack-based bracket matching.
+    
+    This method finds properly balanced JSON objects by tracking opening and closing braces.
+    It's more reliable than regex for extracting complete JSON structures.
+    
+    Args:
+        text: Text that may contain JSON objects
+        
+    Returns:
+        List of JSON object strings (properly balanced braces)
+    """
+    results = []
+    stack = []
+    start_idx = None
+    in_string = False
+    escape_next = False
+    
+    for i, char in enumerate(text):
+        # Handle string escaping
+        if escape_next:
+            escape_next = False
+            continue
+        
+        if char == '\\':
+            escape_next = True
+            continue
+        
+        # Track if we're inside a string (to ignore braces in strings)
+        if char == '"':
+            in_string = not in_string
+            continue
+        
+        # Only process braces outside of strings
+        if not in_string:
+            if char == '{':
+                if not stack:
+                    start_idx = i
+                stack.append('{')
+            elif char == '}':
+                if stack and stack[-1] == '{':
+                    stack.pop()
+                    if not stack and start_idx is not None:
+                        # Found a complete JSON object
+                        results.append(text[start_idx:i+1])
+                        start_idx = None
+    
+    return results
 
 # define ("image"|"text", ImageResult) as SpecifiedImageResult
 SpecifiedImageResult = tuple[Literal["image", "text"], ImageResult]
