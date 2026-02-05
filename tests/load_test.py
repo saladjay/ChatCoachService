@@ -449,12 +449,34 @@ async def main():
         
         from app.core.config import settings
         
-        print(f"\nLLM Configuration:")
-        print(f"  Default Provider:    {settings.llm.default_provider}")
-        print(f"  Default Model:       {settings.llm.default_model}")
-        print(f"  Fallback Model:      {settings.llm.fallback_model}")
-        print(f"  Cheap Model:         {settings.llm.cheap_model}")
-        print(f"  Premium Model:       {settings.llm.premium_model}")
+        print(f"\nApplication Configuration:")
+        print(f"  Default Provider:    {settings.llm.default_provider} (fallback)")
+        print(f"  Default Model:       {settings.llm.default_model} (fallback)")
+        
+        # Try to load actual LLM adapter config
+        try:
+            llm_adapter_path = project_root / "core" / "llm_adapter"
+            if str(llm_adapter_path) not in sys.path:
+                sys.path.insert(0, str(llm_adapter_path))
+            
+            from llm_adapter import ConfigManager
+            
+            config_path = llm_adapter_path / "config.yaml"
+            if config_path.exists():
+                config_manager = ConfigManager(str(config_path))
+                default_provider = config_manager.get_default_provider()
+                provider_config = config_manager.get_provider_config(default_provider)
+                
+                print(f"\nActual LLM Configuration (from core/llm_adapter/config.yaml):")
+                print(f"  Default Provider:    {default_provider}")
+                print(f"  Cheap Model:         {provider_config.models.cheap}")
+                print(f"  Normal Model:        {provider_config.models.normal}")
+                print(f"  Premium Model:       {provider_config.models.premium}")
+                print(f"  Multimodal Model:    {provider_config.models.multimodal}")
+            else:
+                print(f"\n⚠️  LLM config file not found: {config_path}")
+        except Exception as e:
+            print(f"\n⚠️  Could not load LLM adapter config: {e}")
         
         print(f"\nMerge Step Configuration:")
         print(f"  USE_MERGE_STEP:      {settings.use_merge_step}")
