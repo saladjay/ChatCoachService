@@ -298,10 +298,24 @@ class Orchestrator:
                     "image_size": f"{image_width}x{image_height}",
                 })
             
-            llm_response = await llm_client.call(
-                prompt=prompt,
-                image_base64=image_base64,
-            )
+            try:
+                llm_response = await llm_client.call(
+                    prompt=prompt,
+                    image_base64=image_base64,
+                )
+            except RuntimeError as e:
+                error_msg = str(e)
+                # Enhanced error logging for JSON parsing failures
+                if "Failed to parse JSON" in error_msg:
+                    logger.error(
+                        f"JSON parsing failed in merge_step analysis. "
+                        f"The LLM returned invalid or incomplete JSON. "
+                        f"Details: {error_msg}. "
+                        f"Check the 'failed_json_replies/' directory for the complete raw response. "
+                        f"This may indicate: 1) LLM output was truncated, "
+                        f"2) LLM returned non-JSON text, or 3) JSON structure is malformed."
+                    )
+                raise
             
             llm_duration_ms = int((time.time() - llm_start_time) * 1000)
             

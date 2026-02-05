@@ -9,15 +9,24 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class LLMConfig(BaseSettings):
-    """LLM-related configuration."""
+    """LLM-related configuration.
+    
+    Note: These are fallback values. The actual LLM configuration is loaded from
+    core/llm_adapter/config.yaml by the LLMAdapter at runtime.
+    
+    To see the actual provider and models being used, check:
+    - core/llm_adapter/config.yaml (main configuration)
+    - Environment variables (OPENROUTER_API_KEY, etc.)
+    """
     
     model_config = SettingsConfigDict(env_prefix="LLM_")
     
+    # These are fallback values only - actual config is in core/llm_adapter/config.yaml
     default_provider: str = "openrouter"
-    default_model: str = "google/gemini-2.5-flash"
-    fallback_model: str = "google/gemini-2.5-flash"
-    cheap_model: str = "google/gemini-2.5-flash"
-    premium_model: str = "google/gemini-2.5-flash"
+    default_model: str = "google/gemini-2.0-flash-lite-001"
+    fallback_model: str = "google/gemini-2.0-flash-lite-001"
+    cheap_model: str = "google/gemini-2.0-flash-lite-001"
+    premium_model: str = "google/gemini-2.0-flash-lite-001"
 
 
 class OrchestratorConfig(BaseSettings):

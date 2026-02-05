@@ -691,11 +691,13 @@ class MultimodalLLMClient:
             raise RuntimeError(f"Unsupported Gemini mode: {mode}")
 
     def _parse_json_response(self, raw_text: str) -> dict:
+        # 1. Try direct JSON parsing
         try:
             return json.loads(raw_text)
         except json.JSONDecodeError:
             pass
 
+        # 2. Try extracting from markdown code blocks
         code_block_pattern = r"```(?:json)?\s*\n?(.*?)\n?```"
         matches = re.findall(code_block_pattern, raw_text, re.DOTALL)
         for match in matches:
@@ -704,6 +706,15 @@ class MultimodalLLMClient:
             except json.JSONDecodeError:
                 continue
 
+        # 3. Try extracting complete JSON objects using stack matching (improved)
+        json_objects = self._extract_complete_json_objects(raw_text)
+        for json_str in json_objects:
+            try:
+                return json.loads(json_str)
+            except json.JSONDecodeError:
+                continue
+
+        # 4. Fallback: Try simple regex pattern (original logic)
         json_pattern = r"\{.*\}"
         matches = re.findall(json_pattern, raw_text, re.DOTALL)
         for match in matches:
@@ -712,7 +723,106 @@ class MultimodalLLMClient:
             except json.JSONDecodeError:
                 continue
 
+        # All parsing attempts failed - save the failed response for debugging
+        self._save_failed_response(raw_text, "Could not extract valid JSON from response")
         raise ValueError(f"Could not extract valid JSON from response: {raw_text[:200]}...")
+
+    def _extract_complete_json_objects(self, text: str) -> list[str]:
+        """Extract all complete JSON objects from text using stack-based bracket matching.
+        
+        This method finds properly balanced JSON objects by tracking opening and closing braces.
+        It's more reliable than regex for extracting complete JSON structures.
+        
+        Args:
+            text: Text that may contain JSON objects
+            
+        Returns:
+            List of JSON object strings (properly balanced braces)
+        """
+        results = []
+        stack = []
+        start_idx = None
+        in_string = False
+        escape_next = False
+        
+        for i, char in enumerate(text):
+            # Handle string escaping
+            if escape_next:
+                escape_next = False
+                continue
+            
+            if char == '\\':
+                escape_next = True
+                continue
+            
+            # Track if we're inside a string (to ignore braces in strings)
+            if char == '"':
+                in_string = not in_string
+                continue
+            
+            # Only process braces outside of strings
+            if not in_string:
+                if char == '{':
+                    if not stack:
+                        start_idx = i
+                    stack.append('{')
+                elif char == '}':
+                    if stack and stack[-1] == '{':
+                        stack.pop()
+                        if not stack and start_idx is not None:
+                            # Found a complete JSON object
+                            results.append(text[start_idx:i+1])
+                            start_idx = None
+        
+        return results
+
+    def _save_failed_response(self, raw_text: str, error: str) -> None:
+        """Save failed JSON parsing response to file for debugging.
+        
+        When JSON parsing fails, this method saves the complete raw response
+        to the failed_json_replies directory with a timestamp. This helps
+        diagnose why the LLM returned invalid JSON.
+        
+        Args:
+            raw_text: The complete raw text from LLM that failed to parse
+            error: Error message describing the parsing failure
+        """
+        import datetime
+        import logging
+        from pathlib import Path
+        
+        logger = logging.getLogger(__name__)
+        
+        try:
+            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+            failed_dir = Path("failed_json_replies")
+            failed_dir.mkdir(exist_ok=True)
+            
+            # Generate unique filename
+            filename = f"failed_reply_{timestamp}_multimodal.json"
+            filepath = failed_dir / filename
+            
+            # Save complete raw response with metadata
+            data = {
+                "timestamp": datetime.datetime.now().isoformat(),
+                "error": error,
+                "raw_text": raw_text,  # Complete original text
+                "raw_text_length": len(raw_text),
+                "truncated_preview": raw_text[:500],  # Preview first 500 chars
+                "source": "multimodal_llm_client",
+            }
+            
+            with open(filepath, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2, ensure_ascii=False)
+            
+            logger.warning(
+                f"Failed JSON response saved to {filepath}. "
+                f"Response length: {len(raw_text)} chars. "
+                f"Review this file to understand why JSON parsing failed."
+            )
+        except Exception as e:
+            # Don't let logging failure affect main flow
+            logger.error(f"Failed to save failed response to file: {e}")
 
 
 
