@@ -30,6 +30,49 @@ router = APIRouter(tags=["predict"])
 # define (list[str], list[DialogItem], list[ImageResult]) as ImageAnalysisQueueInput
 ImageAnalysisQueueInput = tuple[list[str], list[DialogItem], list[ImageResult]]
 
+
+def parse_json_with_markdown(text: str) -> dict:
+    """Parse JSON text that may be wrapped in markdown code blocks.
+    
+    This function handles various formats:
+    - Plain JSON: {"key": "value"}
+    - Markdown JSON block: ```json\n{"key": "value"}\n```
+    - Markdown code block: ```\n{"key": "value"}\n```
+    - JSON with extra text: Some text {"key": "value"} more text
+    
+    Args:
+        text: The text to parse
+        
+    Returns:
+        Parsed JSON object
+        
+    Raises:
+        json.JSONDecodeError: If JSON cannot be parsed
+    """
+    text = text.strip()
+    
+    # Remove markdown code blocks if present
+    if "```json" in text:
+        start = text.find("```json") + 7
+        end = text.find("```", start)
+        if end > start:
+            text = text[start:end].strip()
+    elif "```" in text:
+        start = text.find("```") + 3
+        end = text.find("```", start)
+        if end > start:
+            text = text[start:end].strip()
+    
+    # Extract JSON object if there's extra text
+    if "{" in text:
+        start = text.find("{")
+        end = text.rfind("}") + 1
+        if end > start:
+            text = text[start:end]
+    
+    # Parse JSON
+    return json.loads(text)
+
 # define ("image"|"text", ImageResult) as SpecifiedImageResult
 SpecifiedImageResult = tuple[Literal["image", "text"], ImageResult]
 
@@ -227,7 +270,10 @@ async def _get_screenshot_analysis_from_cloud_service(content_url, screenshot_pa
                 )
                 dialogs.append(dialog_item)
         else:
-            raise Exception("Failed to parse screenshot")
+            # Include detailed error information from parser response
+            error_msg = f"Screenshot parser failed with code {parser_response.code}: {parser_response.msg}"
+            logger.error(f"Failed to parse screenshot {content_url}: {error_msg}")
+            raise Exception(error_msg)
         
         # Create image result
         result = ImageResult(
@@ -235,6 +281,9 @@ async def _get_screenshot_analysis_from_cloud_service(content_url, screenshot_pa
             dialogs=dialogs
         )
         return result
+    except HTTPException:
+        # Re-raise HTTPException as-is
+        raise
     except Exception as e:
         logger.error(f"Error analyzing screenshot {content_url}: {str(e)}")
         raise HTTPException(
@@ -383,15 +432,25 @@ async def _generate_reply(
                 if orchestrator_response and hasattr(orchestrator_response, "reply_text"):
                     try:
                         logger.info(f"Orchestrator response: {orchestrator_response.reply_text}")
-                        reply_text = json.loads(orchestrator_response.reply_text)
+                        
+                        # Parse JSON with markdown code block handling
+                        reply_text = parse_json_with_markdown(orchestrator_response.reply_text)
+                        
                         if isinstance(reply_text, dict):
                             suggested_reply_items = reply_text.get("replies", [])
                             suggested_replies = [item.get("text", "") for item in suggested_reply_items]
                         else:
                             suggested_replies = []
-                    except Exception as exc:
+                            
+                    except json.JSONDecodeError as exc:
+                        logger.error(f"Failed to parse reply text as JSON: {orchestrator_response.reply_text[:200]}")
                         suggested_replies = []
-                        raise ValueError("Failed to parse reply text as JSON") from exc
+                        raise ValueError(f"Failed to parse reply text as JSON: {str(exc)}") from exc
+                    except Exception as exc:
+                        logger.error(f"Unexpected error parsing reply: {exc}")
+                        suggested_replies = []
+                        raise ValueError(f"Failed to process reply text: {str(exc)}") from exc
+                        
                 logger.info(f"Reply generation successful: {len(suggested_replies)} replies")
             else:
                 logger.warning("Orchestrator not available, skipping reply generation")
@@ -430,6 +489,9 @@ async def handle_image(
                 )
                 items.append(("text", content_url, text_result))
                 continue
+            
+            # Time screenshot analysis
+            screenshot_start = time.time()
             image_result = await get_screenshot_analysis_result(
                 content_url,
                 request.language,
@@ -438,6 +500,9 @@ async def handle_image(
                 cache_service,
                 screenshot_parser,
             )
+            screenshot_duration_ms = int((time.time() - screenshot_start) * 1000)
+            logger.info(f"Screenshot analysis completed in {screenshot_duration_ms}ms for {content_url}")
+            
             image_result.content = content_url
             logger.info(f"Image result: {type(image_result)}")
             logger.info(f"Content processed successfully: {len(image_result.dialogs)} dialogs extracted")
@@ -534,19 +599,26 @@ async def handle_image(
     results = []
     # If only scene analysis is requested
     if request.scene_analysis and items:
+        scenario_start = time.time()
         results = await _scenario_analysis(
             request,
             orchestrator,
             analysis_queue,
         )
+        scenario_duration_ms = int((time.time() - scenario_start) * 1000)
+        logger.info(f"Scenario analysis completed in {scenario_duration_ms}ms")
+    
     suggested_replies: list[str] = []
     # If reply generation is requested, call Orchestrator
     if request.reply and items:
+        reply_start = time.time()
         suggested_replies = await _generate_reply(
             request,
             orchestrator,
             analysis_queue,
         )
+        reply_duration_ms = int((time.time() - reply_start) * 1000)
+        logger.info(f"Reply generation completed in {reply_duration_ms}ms")
 
     # Record successful request
     duration_ms = int((time.time() - start_time) * 1000)

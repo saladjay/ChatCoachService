@@ -962,18 +962,28 @@ class Orchestrator:
         return messages
 
     async def _get_cached_payload(self, request: GenerateReplyRequest, category: str) -> dict | None:
-        if self.cache_service is None or not request.resource or request.force_regenerate or request.resources:
+        # Skip cache if:
+        # 1. No cache service
+        # 2. No resource identifier (neither resource nor resources)
+        # 3. Force regenerate flag is set
+        if self.cache_service is None or (not request.resource and not request.resources) or request.force_regenerate:
             return None
         try:
+            # Use first resource from resources list if resource is not set
+            resource_key = request.resource or (request.resources[0] if request.resources else None)
+            if not resource_key:
+                return None
+                
             cached_event = await self.cache_service.get_resource_category_last(
                 session_id=request.conversation_id,
                 category=category,
-                resource=request.resource or request.resources[0],
+                resource=resource_key,
                 scene=request.scene,
             )
             if cached_event:
                 payload = cached_event.get("payload")
                 if isinstance(payload, dict):
+                    logger.info(f"Cache hit for category={category}, resource={resource_key}")
                     return payload
         except Exception as exc:
             logger.warning("Cache read failed for category=%s: %s", category, exc)
