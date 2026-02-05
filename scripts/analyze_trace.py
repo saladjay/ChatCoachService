@@ -99,11 +99,13 @@ def extract_llm_calls(entries: List[Dict]) -> List[Dict]:
                 "caller_func": caller_func,
                 "response": entry.get("text", "")
             })
-        # Also collect from step_end events (screenshot parser and other LLM-based steps)
-        # Only include step_end if it has LLM metadata (provider, model, tokens, or cost)
+        # Also collect from step_end events (screenshot parser and other DIRECT LLM-based steps)
+        # IMPORTANT: Only include step_end if it has LLM metadata at TOP LEVEL
+        # Do NOT include step_end with LLM metadata in 'result' field, as those are wrappers
+        # around llm_call_end events and would cause double counting
         elif entry.get("type") == "step_end":
-            # Check if this step_end contains LLM call information
-            has_llm_metadata = (
+            # Check if this step_end contains DIRECT LLM call information (top level only)
+            has_direct_llm_metadata = (
                 entry.get("provider") or 
                 entry.get("model") or 
                 entry.get("input_tokens") or 
@@ -111,28 +113,19 @@ def extract_llm_calls(entries: List[Dict]) -> List[Dict]:
                 entry.get("cost_usd")
             )
             
-            # Also check if result contains LLM metadata
-            result = entry.get("result", {})
-            if isinstance(result, dict):
-                has_llm_metadata = has_llm_metadata or (
-                    result.get("provider") or 
-                    result.get("model") or 
-                    result.get("input_tokens") or 
-                    result.get("output_tokens") or 
-                    result.get("cost_usd")
-                )
-            
-            # Only add if this is actually an LLM call
-            if has_llm_metadata:
+            # Only add if this is a DIRECT LLM call (not a wrapper)
+            # Examples of direct LLM calls: merge_step_llm (has top-level metadata)
+            # Examples of wrappers: reply_generation_attempt_1 (metadata in result field)
+            if has_direct_llm_metadata:
                 step_id = entry.get("step_id")
                 prompt = prompts_by_step_id.get(step_id, "")
                 
-                # Try to get metadata from top level first, then from result
-                provider = entry.get("provider") or (result.get("provider") if isinstance(result, dict) else None) or "unknown"
-                model = entry.get("model") or (result.get("model") if isinstance(result, dict) else None) or "unknown"
-                input_tokens = entry.get("input_tokens") or (result.get("input_tokens") if isinstance(result, dict) else 0) or 0
-                output_tokens = entry.get("output_tokens") or (result.get("output_tokens") if isinstance(result, dict) else 0) or 0
-                cost_usd = entry.get("cost_usd") or (result.get("cost_usd") if isinstance(result, dict) else 0.0) or 0.0
+                # Get metadata from top level
+                provider = entry.get("provider") or "unknown"
+                model = entry.get("model") or "unknown"
+                input_tokens = entry.get("input_tokens", 0)
+                output_tokens = entry.get("output_tokens", 0)
+                cost_usd = entry.get("cost_usd", 0.0)
                 
                 # Infer task_type from step_name if not provided
                 task_type = entry.get("task_type")

@@ -7,12 +7,35 @@ echo "Starting ChatCoach API Server"
 echo "========================================"
 echo ""
 
+# Check if .venv exists, if not run uv sync
+if [ ! -d ".venv" ]; then
+    echo "Virtual environment not found. Running uv sync..."
+    if command -v uv > /dev/null 2>&1; then
+        uv sync
+        if [ $? -eq 0 ]; then
+            echo "✓ Virtual environment created successfully"
+        else
+            echo "Error: Failed to create virtual environment"
+            echo "Please run 'uv sync' manually"
+            exit 1
+        fi
+    else
+        echo "Error: uv is not installed"
+        echo "Please install uv first: https://docs.astral.sh/uv/getting-started/installation/"
+        exit 1
+    fi
+    echo ""
+fi
+
 # Activate virtual environment if it exists
 if [ -f ".venv/bin/activate" ]; then
     echo "Activating virtual environment..."
     # shellcheck disable=SC1091
     . ./.venv/bin/activate
     echo "✓ Virtual environment activated"
+else
+    echo "Warning: Virtual environment activation script not found"
+    echo "Continuing without virtual environment..."
 fi
 
 script_args=()
