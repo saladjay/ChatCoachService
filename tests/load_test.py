@@ -432,6 +432,48 @@ async def main():
     
     args = parser.parse_args()
     
+    # Print current configuration
+    print("\n" + "=" * 80)
+    print("LOAD TEST CONFIGURATION")
+    print("=" * 80)
+    
+    # Try to load and print LLM configuration
+    try:
+        import sys
+        from pathlib import Path
+        
+        # Add project root to path
+        project_root = Path(__file__).parent.parent
+        if str(project_root) not in sys.path:
+            sys.path.insert(0, str(project_root))
+        
+        from app.core.config import settings
+        
+        print(f"\nLLM Configuration:")
+        print(f"  Default Provider:    {settings.llm.default_provider}")
+        print(f"  Default Model:       {settings.llm.default_model}")
+        print(f"  Fallback Model:      {settings.llm.fallback_model}")
+        print(f"  Cheap Model:         {settings.llm.cheap_model}")
+        print(f"  Premium Model:       {settings.llm.premium_model}")
+        
+        print(f"\nMerge Step Configuration:")
+        print(f"  USE_MERGE_STEP:      {settings.use_merge_step}")
+        
+        print(f"\nCache Configuration:")
+        print(f"  NO_REPLY_CACHE:      {settings.no_reply_cache}")
+        print(f"  NO_PERSONA_CACHE:    {settings.no_persona_cache}")
+        
+        print(f"\nTrace Configuration:")
+        print(f"  TRACE_ENABLED:       {settings.trace.enabled}")
+        print(f"  TRACE_LEVEL:         {settings.trace.level}")
+        print(f"  TRACE_LOG_PROMPT:    {settings.trace.log_llm_prompt}")
+        
+    except Exception as e:
+        print(f"\n⚠️  Could not load configuration: {e}")
+        print("   (This is normal if running outside the project directory)")
+    
+    print("=" * 80)
+    
     # Create tester
     tester = LoadTester(
         base_url=args.url,
