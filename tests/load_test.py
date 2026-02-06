@@ -20,6 +20,29 @@ import statistics
 
 import httpx
 
+# Load environment variables from .env file
+from pathlib import Path
+import sys
+
+# Add project root to path and load .env
+project_root = Path(__file__).parent.parent
+if str(project_root) not in sys.path:
+    sys.path.insert(0, str(project_root))
+
+# Load .env file before importing app modules
+try:
+    from dotenv import load_dotenv
+    env_file = project_root / ".env"
+    if env_file.exists():
+        load_dotenv(env_file)
+        print(f"✓ Loaded environment variables from {env_file}")
+    else:
+        print(f"⚠ .env file not found at {env_file}")
+except ImportError:
+    print("⚠ python-dotenv not installed, environment variables from .env will not be loaded")
+except Exception as e:
+    print(f"⚠ Error loading .env file: {e}")
+
 
 @dataclass
 class TestResult:
@@ -473,10 +496,20 @@ async def main():
                 print(f"  Normal Model:        {provider_config.models.normal}")
                 print(f"  Premium Model:       {provider_config.models.premium}")
                 print(f"  Multimodal Model:    {provider_config.models.multimodal}")
+                
+                # Show proxy status
+                proxy_url = config_manager.get_proxy_url()
+                if proxy_url:
+                    print(f"  Proxy:               {proxy_url} (ENABLED)")
+                else:
+                    print(f"  Proxy:               DISABLED")
             else:
                 print(f"\n⚠️  LLM config file not found: {config_path}")
         except Exception as e:
+            import os
             print(f"\n⚠️  Could not load LLM adapter config: {e}")
+            print(f"    Hint: Make sure .env file exists and contains LLM_DEFAULT_PROVIDER")
+            print(f"    Current LLM_DEFAULT_PROVIDER: {os.getenv('LLM_DEFAULT_PROVIDER', 'NOT SET')}")
         
         print(f"\nMerge Step Configuration:")
         print(f"  USE_MERGE_STEP:      {settings.use_merge_step}")
