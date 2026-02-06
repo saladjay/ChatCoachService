@@ -35,14 +35,16 @@ class ImageFetcher:
         self.timeout = timeout
         self.max_dimension = max_dimension
 
-    async def fetch_image(self, url: str) -> FetchedImage:
+    async def fetch_image(self, url: str, compress: bool = True) -> FetchedImage:
         """Download and process an image from a URL.
         
         Args:
             url: Public URL of the image to fetch
+            compress: Whether to compress the image (default: True)
+                     Set to False when using URL format to avoid unnecessary processing
             
         Returns:
-            FetchedImage containing processed image data (compressed if needed)
+            FetchedImage containing processed image data (compressed if compress=True)
             
         Raises:
             ValueError: If URL is invalid or image cannot be processed
@@ -71,10 +73,16 @@ class ImageFetcher:
         except Exception:
             img_format = "unknown"
         
-        # Compress image if needed
-        compressed_bytes, final_width, final_height = self._compress_image_if_needed(
-            image_bytes, original_width, original_height
-        )
+        # Compress image if needed and requested
+        if compress:
+            compressed_bytes, final_width, final_height = self._compress_image_if_needed(
+                image_bytes, original_width, original_height
+            )
+        else:
+            # Skip compression when using URL format
+            compressed_bytes = image_bytes
+            final_width = original_width
+            final_height = original_height
         
         # Convert to base64
         base64_data = self._convert_to_base64(compressed_bytes)

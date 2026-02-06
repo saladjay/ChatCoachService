@@ -27,6 +27,11 @@ class LLMConfig(BaseSettings):
     fallback_model: str = "google/gemini-2.0-flash-lite-001"
     cheap_model: str = "google/gemini-2.0-flash-lite-001"
     premium_model: str = "google/gemini-2.0-flash-lite-001"
+    
+    # Multimodal image transport format: "base64" or "url"
+    # base64: Compress and encode image as base64 (recommended for most providers)
+    # url: Send image URL directly (faster but not all providers support it)
+    multimodal_image_format: Literal["base64", "url"] = "base64"
 
 
 class OrchestratorConfig(BaseSettings):
@@ -67,6 +72,7 @@ class TraceConfig(BaseSettings):
     level: Literal["error", "info", "debug"] = "info"
     file_path: str = "logs/trace.jsonl"
     log_llm_prompt: bool = True
+    log_timing: bool = False  # Enable timing logs for performance monitoring
 
 
 class PromptConfig(BaseSettings):
