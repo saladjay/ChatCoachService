@@ -280,9 +280,9 @@ class Orchestrator:
             
             # Call multimodal LLM
             from app.services.image_fetcher import ImageFetcher
-            from app.services.llm_adapter import MultimodalLLMClient
+            from app.services.llm_adapter import create_llm_adapter
             
-            llm_client = MultimodalLLMClient()
+            llm_adapter = create_llm_adapter()
             
             # Log prompt if enabled
             if trace_logger.should_log_prompt():
@@ -299,10 +299,23 @@ class Orchestrator:
                 })
             
             try:
-                llm_response = await llm_client.call(
+                llm_result = await llm_adapter.call_multimodal(
                     prompt=prompt,
-                    image_base64=image_base64,
+                    image_data=image_base64,
+                    image_type="base64",
+                    user_id=request.user_id,
                 )
+                
+                # Parse JSON from text response
+                import json
+                from app.api.v1.predict import parse_json_with_markdown
+                
+                try:
+                    parsed_json = parse_json_with_markdown(llm_result.text)
+                    raw_text = llm_result.text
+                except json.JSONDecodeError as e:
+                    logger.error(f"Failed to parse JSON from merge_step response: {e}")
+                    raise RuntimeError(f"Failed to parse JSON from response: {str(e)}")
             except RuntimeError as e:
                 error_msg = str(e)
                 # Enhanced error logging for JSON parsing failures
@@ -329,11 +342,11 @@ class Orchestrator:
                 "session_id": request.conversation_id,
                 "user_id": request.user_id,
                 "duration_ms": llm_duration_ms,
-                "provider": llm_response.provider,
-                "model": llm_response.model,
-                "cost_usd": llm_response.cost_usd,
-                "input_tokens": llm_response.input_tokens,
-                "output_tokens": llm_response.output_tokens,
+                "provider": llm_result.provider,
+                "model": llm_result.model,
+                "cost_usd": llm_result.cost_usd,
+                "input_tokens": llm_result.input_tokens,
+                "output_tokens": llm_result.output_tokens,
             })
             
             # Log response text if prompt logging is enabled
@@ -346,14 +359,14 @@ class Orchestrator:
                     "task_type": "merge_step",
                     "session_id": request.conversation_id,
                     "user_id": request.user_id,
-                    "response": llm_response.raw_text[:1000] if llm_response.raw_text else "",  # Truncate for log size
+                    "response": raw_text[:1000] if raw_text else "",  # Truncate for log size
                 })
             
             logger.info(
                 f"merge_step LLM call successful: "
-                f"provider={llm_response.provider}, "
-                f"model={llm_response.model}, "
-                f"cost=${llm_response.cost_usd:.4f}, "
+                f"provider={llm_result.provider}, "
+                f"model={llm_result.model}, "
+                f"cost=${llm_result.cost_usd:.4f}, "
                 f"duration={llm_duration_ms}ms"
             )
             
@@ -362,15 +375,15 @@ class Orchestrator:
             adapter = MergeStepAdapter()
             
             # Validate output
-            if not adapter.validate_merge_output(llm_response.parsed_json):
+            if not adapter.validate_merge_output(parsed_json):
                 raise ValueError("Invalid merge_step output structure")
             
             # Convert to ContextResult
             dialogs = request.dialogs
-            context = adapter.to_context_result(llm_response.parsed_json, dialogs)
+            context = adapter.to_context_result(parsed_json, dialogs)
             
             # Convert to SceneAnalysisResult (without strategies yet)
-            scene = adapter.to_scene_analysis_result(llm_response.parsed_json)
+            scene = adapter.to_scene_analysis_result(parsed_json)
             
             # Apply strategy selection based on recommended_scenario
             from app.services.strategy_selector import get_strategy_selector

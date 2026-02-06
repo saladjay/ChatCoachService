@@ -319,13 +319,21 @@ async def predict(
                       500 for inference errors
     """
     start_time = time.time()
+    logger.info(f"[TIMING] predict function started at {datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
     
-    logger.info(
-        f"Predict request received: user_id={request.user_id}, "
-        f"content={len(request.content)}, scene={request.scene}, "
-        f"language={request.language}, reply={request.reply}, "
-        f"session_id={request.session_id}, scene_analysis={request.scene_analysis}"
-    )
+    # Log request start with trace
+    if trace_logger.should_log_timing():
+        trace_logger.log_event({
+            "level": "debug",
+            "type": "predict_start",
+            "user_id": request.user_id,
+            "content_count": len(request.content),
+            "scene": request.scene,
+            "language": request.language,
+            "reply": request.reply,
+            "session_id": request.session_id,
+            "scene_analysis": request.scene_analysis,
+        })
     
     # Log other_properties if provided
     if request.other_properties:
@@ -369,11 +377,14 @@ async def predict(
 
         # Handle text Q&A scenario (scene == 2)
         if normalized_scene == 2:
-            return await handle_text_qa(request, start_time, metrics)
+            result = await handle_text_qa(request, start_time, metrics)
+            duration_ms = int((time.time() - start_time) * 1000)
+            logger.info(f"[TIMING] predict function ended (text_qa) at {datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}, duration: {duration_ms}ms")
+            return result
         
         # Handle image and text scenario (scene == 1)
         if normalized_scene == 1:
-            return await handle_image(
+            result = await handle_image(
                 request,
                 screenshot_parser,
                 orchestrator,
@@ -381,6 +392,9 @@ async def predict(
                 metrics,
                 cache_service,
             )
+            duration_ms = int((time.time() - start_time) * 1000)
+            logger.info(f"[TIMING] predict function ended (image) at {datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}, duration: {duration_ms}ms")
+            return result
         
     except HTTPException:
         # Re-raise HTTP exceptions
@@ -388,8 +402,10 @@ async def predict(
         
     except Exception as e:
         # Requirement 7.4, 7.5: Return descriptive error messages and log errors
+        duration_ms = int((time.time() - start_time) * 1000)
         logger.exception(f"Unexpected error in predict endpoint: {e}")
-        metrics.record_request("predict", 500, int((time.time() - start_time) * 1000))
+        logger.info(f"[TIMING] predict function ended with error at {datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}, duration: {duration_ms}ms")
+        metrics.record_request("predict", 500, duration_ms)
         
         return PredictResponse(
             success=False,
@@ -777,8 +793,29 @@ async def _generate_reply(
                         reply_text = parse_json_with_markdown(orchestrator_response.reply_text)
                         
                         if isinstance(reply_text, dict):
-                            suggested_reply_items = reply_text.get("replies", [])
-                            suggested_replies = [item.get("text", "") for item in suggested_reply_items]
+                            # Support multiple JSON formats:
+                            # 1. Standard format: {"replies": [{"text": "..."}, ...]}
+                            # 2. Short format: {"r": [["text", null], ...], "adv": "..."}
+                            
+                            if "replies" in reply_text:
+                                # Standard format
+                                suggested_reply_items = reply_text.get("replies", [])
+                                suggested_replies = [item.get("text", "") for item in suggested_reply_items]
+                            elif "r" in reply_text:
+                                # Short format: "r" contains array of [text, null] pairs
+                                r_items = reply_text.get("r", [])
+                                suggested_replies = []
+                                for item in r_items:
+                                    if isinstance(item, list) and len(item) > 0:
+                                        # Extract first element (text)
+                                        suggested_replies.append(str(item[0]) if item[0] else "")
+                                    elif isinstance(item, str):
+                                        # Direct string
+                                        suggested_replies.append(item)
+                                logger.info(f"Parsed {len(suggested_replies)} replies from 'r' format")
+                            else:
+                                logger.warning(f"Unknown JSON format, no 'replies' or 'r' field found: {list(reply_text.keys())}")
+                                suggested_replies = []
                         else:
                             suggested_replies = []
                             
@@ -842,6 +879,17 @@ async def handle_image(
     1. Use merge_step for each screenshot (combines parsing, context, scenario)
     2. Optionally generate replies
     """
+    # Log handle_image start with trace
+    if trace_logger.should_log_timing():
+        trace_logger.log_event({
+            "level": "debug",
+            "type": "handle_image_start",
+            "session_id": request.session_id,
+            "user_id": request.user_id,
+            "content_count": len(request.content),
+            "elapsed_ms": int((time.time() - start_time) * 1000),
+        })
+    
     # Check if merge_step is enabled
     use_merge_step = settings.use_merge_step
     
@@ -916,7 +964,8 @@ async def handle_image(
                 "duration_ms": screenshot_duration_ms,
             })
             
-            logger.info(f"Screenshot analysis completed in {screenshot_duration_ms}ms for {content_url}")
+            if trace_logger.should_log_timing():
+                logger.info(f"Screenshot analysis completed in {screenshot_duration_ms}ms for {content_url}")
             
             image_result.content = content_url
             logger.info(f"Image result: {type(image_result)}")
@@ -1027,13 +1076,30 @@ async def handle_image(
                 analysis_queue,
             )
             reply_duration_ms = int((time.time() - reply_start) * 1000)
-            logger.info(f"Reply generation completed in {reply_duration_ms}ms")
+            
+            if trace_logger.should_log_timing():
+                trace_logger.log_event({
+                    "level": "debug",
+                    "type": "reply_generation",
+                    "session_id": request.session_id,
+                    "duration_ms": reply_duration_ms,
+                    "reply_count": len(suggested_replies),
+                })
+                logger.info(f"Reply generation completed in {reply_duration_ms}ms")
         
         # Record successful request
         duration_ms = int((time.time() - start_time) * 1000)
         metrics.record_request("predict", 200, duration_ms)
         
-        logger.info(f"merge_step flow completed in {duration_ms}ms")
+        if trace_logger.should_log_timing():
+            trace_logger.log_event({
+                "level": "debug",
+                "type": "handle_image_complete",
+                "session_id": request.session_id,
+                "flow": "merge_step",
+                "total_duration_ms": duration_ms,
+            })
+            logger.info(f"merge_step flow completed in {duration_ms}ms")
         
         return PredictResponse(
             success=True,
@@ -1096,7 +1162,16 @@ async def handle_image(
             analysis_queue,
         )
         scenario_duration_ms = int((time.time() - scenario_start) * 1000)
-        logger.info(f"Merged scenario analysis completed in {scenario_duration_ms}ms")
+        
+        if trace_logger.should_log_timing():
+            trace_logger.log_event({
+                "level": "debug",
+                "type": "scenario_analysis",
+                "session_id": request.session_id,
+                "duration_ms": scenario_duration_ms,
+                "result_count": len(results),
+            })
+            logger.info(f"Merged scenario analysis completed in {scenario_duration_ms}ms")
     
     suggested_replies: list[str] = []
     # Step 4: Generate replies if requested
@@ -1108,11 +1183,29 @@ async def handle_image(
             analysis_queue,
         )
         reply_duration_ms = int((time.time() - reply_start) * 1000)
-        logger.info(f"Reply generation completed in {reply_duration_ms}ms")
+        
+        if trace_logger.should_log_timing():
+            trace_logger.log_event({
+                "level": "debug",
+                "type": "reply_generation",
+                "session_id": request.session_id,
+                "duration_ms": reply_duration_ms,
+                "reply_count": len(suggested_replies),
+            })
+            logger.info(f"Reply generation completed in {reply_duration_ms}ms")
 
     # Record successful request
     duration_ms = int((time.time() - start_time) * 1000)
     metrics.record_request("predict", 200, duration_ms)
+    
+    if trace_logger.should_log_timing():
+        trace_logger.log_event({
+            "level": "debug",
+            "type": "handle_image_complete",
+            "session_id": request.session_id,
+            "flow": "traditional",
+            "total_duration_ms": duration_ms,
+        })
     
     if results:
         logger.info(f'result scenario:{results[0].scenario}')
@@ -1134,7 +1227,28 @@ async def handle_text_qa(
     start_time: float,
     metrics: MetricsCollectorDep,
 ) -> PredictResponse:
+    # Log text QA start with trace
+    if trace_logger.should_log_timing():
+        trace_logger.log_event({
+            "level": "debug",
+            "type": "text_qa_start",
+            "session_id": request.session_id,
+            "user_id": request.user_id,
+            "elapsed_ms": int((time.time() - start_time) * 1000),
+        })
+    
+    step_start = time.time()
     question = "\n".join([c.strip() for c in request.content if c and c.strip()])
+    
+    if trace_logger.should_log_timing():
+        trace_logger.log_event({
+            "level": "debug",
+            "type": "question_parsing",
+            "session_id": request.session_id,
+            "duration_ms": int((time.time() - step_start) * 1000),
+            "elapsed_ms": int((time.time() - start_time) * 1000),
+        })
+    
     if not question:
         metrics.record_request(
             "predict",
@@ -1151,13 +1265,45 @@ async def handle_text_qa(
             results=[],
         )
 
+    step_start = time.time()
     if request.language == "zh":
         prompt = f"请用中文回答用户问题。\n\n用户问题：\n{question}\n"
     else:
         prompt = f"Answer the user's question clearly and helpfully.\n\nUser question:\n{question}\n"
+    
+    if trace_logger.should_log_timing():
+        trace_logger.log_event({
+            "level": "debug",
+            "type": "prompt_building",
+            "session_id": request.session_id,
+            "duration_ms": int((time.time() - step_start) * 1000),
+            "elapsed_ms": int((time.time() - start_time) * 1000),
+        })
 
     try:
+        step_start = time.time()
         llm_adapter = create_llm_adapter()
+        
+        if trace_logger.should_log_timing():
+            trace_logger.log_event({
+                "level": "debug",
+                "type": "create_llm_adapter",
+                "session_id": request.session_id,
+                "duration_ms": int((time.time() - step_start) * 1000),
+                "elapsed_ms": int((time.time() - start_time) * 1000),
+            })
+        
+        step_start = time.time()
+        
+        if trace_logger.should_log_timing():
+            trace_logger.log_event({
+                "level": "debug",
+                "type": "llm_call_start",
+                "session_id": request.session_id,
+                "task_type": "text_qa",
+                "elapsed_ms": int((time.time() - start_time) * 1000),
+            })
+        
         llm_result = await llm_adapter.call(
             LLMCall(
                 task_type="generation",
@@ -1166,11 +1312,31 @@ async def handle_text_qa(
                 user_id=request.user_id,
             )
         )
+        
+        if trace_logger.should_log_timing():
+            trace_logger.log_event({
+                "level": "debug",
+                "type": "llm_call_end",
+                "session_id": request.session_id,
+                "task_type": "text_qa",
+                "duration_ms": int((time.time() - step_start) * 1000),
+                "elapsed_ms": int((time.time() - start_time) * 1000),
+            })
 
+        step_start = time.time()
         duration_ms = int((time.time() - start_time) * 1000)
         metrics.record_request("predict", 200, duration_ms)
-
-        return PredictResponse(
+        
+        if trace_logger.should_log_timing():
+            trace_logger.log_event({
+                "level": "debug",
+                "type": "metrics_recording",
+                "session_id": request.session_id,
+                "duration_ms": int((time.time() - step_start) * 1000),
+            })
+        
+        step_start = time.time()
+        response = PredictResponse(
             success=True,
             message="成功",
             user_id=request.user_id,
@@ -1193,6 +1359,22 @@ async def handle_text_qa(
             ],
             suggested_replies=[llm_result.text],
         )
+        
+        if trace_logger.should_log_timing():
+            trace_logger.log_event({
+                "level": "debug",
+                "type": "response_building",
+                "session_id": request.session_id,
+                "duration_ms": int((time.time() - step_start) * 1000),
+            })
+            trace_logger.log_event({
+                "level": "debug",
+                "type": "text_qa_complete",
+                "session_id": request.session_id,
+                "total_duration_ms": duration_ms,
+            })
+        
+        return response
 
     except LLMAdapterError as e:
         logger.error(f"Text Q&A LLM call failed: {e}")
