@@ -199,6 +199,7 @@ class Orchestrator:
     async def merge_step_analysis(
         self,
         request: GenerateReplyRequest,
+        image_url: str,
         image_base64: str,
         image_width: int,
         image_height: int,
@@ -213,7 +214,8 @@ class Orchestrator:
         
         Args:
             request: GenerateReplyRequest with user info
-            image_base64: Base64-encoded screenshot image
+            image_url: Original image URL (used when image_format=url)
+            image_base64: Base64-encoded screenshot image (used when image_format=base64)
             image_width: Image width in pixels
             image_height: Image height in pixels
             
@@ -281,8 +283,22 @@ class Orchestrator:
             # Call multimodal LLM
             from app.services.image_fetcher import ImageFetcher
             from app.services.llm_adapter import create_llm_adapter
+            from app.core.config import settings
             
             llm_adapter = create_llm_adapter()
+            
+            # Get image format configuration
+            image_format = settings.llm.multimodal_image_format
+            
+            # Choose image data and type based on configuration
+            if image_format == "url":
+                image_data = image_url
+                image_type = "url"
+                logger.info(f"Using URL format for merge_step multimodal LLM")
+            else:
+                image_data = image_base64
+                image_type = "base64"
+                logger.info(f"Using base64 format for merge_step multimodal LLM")
             
             # Log prompt if enabled
             if trace_logger.should_log_prompt():
@@ -301,8 +317,8 @@ class Orchestrator:
             try:
                 llm_result = await llm_adapter.call_multimodal(
                     prompt=prompt,
-                    image_data=image_base64,
-                    image_type="base64",
+                    image_data=image_data,
+                    image_type=image_type,
                     user_id=request.user_id,
                 )
                 
