@@ -539,20 +539,30 @@ async def get_merge_step_analysis_result(
     try:
         logger.info(f"Processing content with merge_step: {content_url}")
         
-        # Download and encode image
-        from app.services.image_fetcher import ImageFetcher
-        from app.core.config import settings
-        
-        image_fetcher = ImageFetcher()
-        
         # Get image format configuration
+        from app.core.config import settings
         image_format = settings.llm.multimodal_image_format
         
-        # Only compress if using base64 format
-        # When using URL format, LLM provider downloads original image directly
-        compress = (image_format == "base64")
-        
-        fetched_image = await image_fetcher.fetch_image(content_url, compress=compress)
+        # Prepare image data based on format
+        if image_format == "url":
+            # URL format: Skip download completely, use placeholder dimensions
+            # LLM will download the image directly from URL
+            image_width = 1080  # Placeholder - actual dimensions not critical for URL mode
+            image_height = 1920  # Placeholder - typical mobile screenshot ratio
+            image_base64 = None  # Not needed for URL format
+            
+            logger.info(f"Using URL format (skipping download): {content_url}")
+        else:
+            # Base64 format: Download and compress image
+            from app.services.image_fetcher import ImageFetcher
+            image_fetcher = ImageFetcher()
+            
+            fetched_image = await image_fetcher.fetch_image(content_url, compress=True)
+            image_width = fetched_image.width
+            image_height = fetched_image.height
+            image_base64 = fetched_image.base64_data
+            
+            logger.info(f"Using base64 format: {image_width}x{image_height}")
         
         # Prepare GenerateReplyRequest for orchestrator
         from app.models.api import GenerateReplyRequest
@@ -573,9 +583,9 @@ async def get_merge_step_analysis_result(
         context, scene = await orchestrator.merge_step_analysis(
             request=orchestrator_request,
             image_url=content_url,
-            image_base64=fetched_image.base64_data,
-            image_width=fetched_image.width,
-            image_height=fetched_image.height,
+            image_base64=image_base64,
+            image_width=image_width,
+            image_height=image_height,
         )
         
         # Convert context.conversation to dialogs
