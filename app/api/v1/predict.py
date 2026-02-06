@@ -541,8 +541,18 @@ async def get_merge_step_analysis_result(
         
         # Download and encode image
         from app.services.image_fetcher import ImageFetcher
+        from app.core.config import settings
+        
         image_fetcher = ImageFetcher()
-        fetched_image = await image_fetcher.fetch_image(content_url)
+        
+        # Get image format configuration
+        image_format = settings.llm.multimodal_image_format
+        
+        # Only compress if using base64 format
+        # When using URL format, LLM provider downloads original image directly
+        compress = (image_format == "base64")
+        
+        fetched_image = await image_fetcher.fetch_image(content_url, compress=compress)
         
         # Prepare GenerateReplyRequest for orchestrator
         from app.models.api import GenerateReplyRequest
@@ -562,6 +572,7 @@ async def get_merge_step_analysis_result(
         # Call merge_step_analysis
         context, scene = await orchestrator.merge_step_analysis(
             request=orchestrator_request,
+            image_url=content_url,
             image_base64=fetched_image.base64_data,
             image_width=fetched_image.width,
             image_height=fetched_image.height,
@@ -1004,14 +1015,9 @@ async def handle_image(
                 logger.error(f"Image load failed for {content_url}: {e}")
                 metrics.record_request("predict", 400, int((time.time() - start_time) * 1000))
                 
-                return PredictResponse(
-                    success=False,
-                    message=f"Load image failed: {str(e)}",
-                    user_id=request.user_id,
-                    request_id=request.request_id,
-                    session_id=request.session_id,
-                    scene=request.scene,
-                    results=[],
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Load image failed: {str(e)}",
                 )
             
             else:
@@ -1019,14 +1025,9 @@ async def handle_image(
                 logger.error(f"Inference failed for {content_url}: {e}", exc_info=True)
                 metrics.record_request("predict", 500, int((time.time() - start_time) * 1000))
                 
-                return PredictResponse(
-                    success=False,
-                    message=f"Inference error: {str(e)}",
-                    user_id=request.user_id,
-                    request_id=request.request_id,
-                    session_id=request.session_id,
-                    scene=request.scene,
-                    results=[],
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Inference error: {str(e)}",
                 )
 
     # If merge_step is enabled and we have results, return them directly

@@ -93,6 +93,10 @@ class ResultNormalizer:
         )
 
     def _is_compact_output(self, data: dict) -> bool:
+        # Handle list of dicts (LLM sometimes returns [{}] instead of {})
+        if isinstance(data, list) and len(data) > 0:
+            data = data[0]
+        
         if not isinstance(data, dict):
             return False
         if "participants" in data or "layout" in data:
@@ -100,6 +104,10 @@ class ResultNormalizer:
         return "bubbles" in data
 
     def _adapt_compact_output(self, data: dict) -> dict:
+        # Handle both single dict and list of dicts
+        if isinstance(data, list) and len(data) > 0:
+            data = data[0]
+        
         nicknames = data.get("nickname")
         self_nickname = "user"
         other_nickname = "talker"
