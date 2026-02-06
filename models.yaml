@@ -1,0 +1,8 @@
+models:
+  - mistralai/ministral-8b-2512
+  - mistralai/ministral-3b-2512
+  - google/gemini-2.5-flash-image
+  - google/gemini-2.0-flash-lite-001
+  - qwen/qwen3-vl-30b-a3b-instruct
+  - qwen/qwen-turbo
+  - mistralai/ministral-3b-2512
