@@ -157,6 +157,24 @@ class CacheConfig(BaseSettings):
     redis_key_prefix: str = "cache"
 
 
+class DebugConfig(BaseSettings):
+    """Debug and logging control configuration."""
+    
+    model_config = SettingsConfigDict(env_prefix="DEBUG_")
+    
+    # Race strategy debug settings
+    # When True, wait for all models to complete and log all results
+    # When False, stop after first valid result (faster, production mode)
+    race_wait_all: bool = False
+    
+    # Detailed logging for different components
+    log_merge_step_extraction: bool = True  # Log extracted bubbles from merge_step
+    log_screenshot_parse: bool = True  # Log extracted dialogs from screenshot_parse
+    log_race_strategy: bool = True  # Log race strategy details
+    log_llm_calls: bool = False  # Log detailed LLM call information
+    log_validation: bool = False  # Log validation details
+
+
 class AppConfig(BaseSettings):
     """Main application configuration."""
     
@@ -198,6 +216,7 @@ class AppConfig(BaseSettings):
     database: DatabaseConfig = DatabaseConfig()
     trace: TraceConfig = TraceConfig()
     prompt: PromptConfig = PromptConfig.from_env()
+    debug_config: DebugConfig = DebugConfig()
     moderation: ModerationClientConfig = ModerationClientConfig()
     cache: CacheConfig = CacheConfig()
 

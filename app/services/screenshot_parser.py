@@ -3,6 +3,8 @@
 This module provides the main ScreenshotParserService class that orchestrates
 the screenshot parsing workflow by coordinating image fetching, prompt building,
 LLM invocation, and result normalization.
+
+VERSION: 2.0 - Updated logging to show bubbles instead of messages
 """
 
 import logging
@@ -84,37 +86,63 @@ class ScreenshotParserService:
             parsed_json: Parsed JSON response
         """
         try:
-            conversation = parsed_json.get("conversation", [])
-            participants = parsed_json.get("participants", {})
+            # Extract bubbles from screenshot_parse section
+            screenshot_parse = parsed_json.get("screenshot_parse", {})
+            bubbles = screenshot_parse.get("bubbles", [])
+            participants = screenshot_parse.get("participants", {})
             
             # Log participants info
-            user_nickname = participants.get("user", {}).get("nickname", "Unknown")
-            target_nickname = participants.get("target", {}).get("nickname", "Unknown")
+            self_info = participants.get("self", {})
+            other_info = participants.get("other", {})
+            user_nickname = self_info.get("nickname", "Unknown")
+            target_nickname = other_info.get("nickname", "Unknown")
             
             logger.info(
                 f"[{session_id}] merge_step [{strategy}|{model}] Participants: "
                 f"User='{user_nickname}', Target='{target_nickname}'"
             )
             
-            # Log conversation details
+            # Sort bubbles by y-coordinate (top to bottom)
+            sorted_bubbles = sorted(bubbles, key=lambda b: b.get("bbox", {}).get("y1", 0))
+            
+            # Get layout info to understand role mapping
+            screenshot_parse = parsed_json.get("screenshot_parse", {})
+            layout = screenshot_parse.get("layout", {})
+            left_role = layout.get("left_role", "unknown")
+            right_role = layout.get("right_role", "unknown")
+            
+            # Log bubble details with layout context
             logger.info(
-                f"[{session_id}] merge_step [{strategy}|{model}] Extracted {len(conversation)} messages:"
+                f"[{session_id}] 🏁 RACE [{strategy}|{model}] Layout: left={left_role}, right={right_role}"
+            )
+            logger.info(
+                f"[{session_id}] 🏁 RACE [{strategy}|{model}] Extracted {len(sorted_bubbles)} bubbles (sorted top→bottom):"
             )
             
-            for idx, msg in enumerate(conversation, 1):
-                speaker = msg.get("speaker", "unknown")
-                content = msg.get("content", "")
-                position = msg.get("position", "unknown")
+            for idx, bubble in enumerate(sorted_bubbles, 1):
+                sender = bubble.get("sender", "unknown")
+                text = bubble.get("text", "")
+                column = bubble.get("column", "unknown")
+                bbox = bubble.get("bbox", {})
+                x1 = bbox.get("x1", 0)
+                y1 = bbox.get("y1", 0)
+                x2 = bbox.get("x2", 0)
+                y2 = bbox.get("y2", 0)
+                
+                # Show expected role based on layout
+                expected_role = left_role if column == "left" else right_role
+                role_match = "✓" if sender == expected_role else "✗"
                 
                 # Truncate long messages for readability
-                display_content = content[:100] + "..." if len(content) > 100 else content
+                display_text = text[:100] + "..." if len(text) > 100 else text
                 
                 logger.info(
-                    f"[{session_id}]   [{idx}] {speaker} ({position}): {display_content}"
+                    f"[{session_id}] 🏁   [{idx}] {sender}({column}) {role_match} "
+                    f"bbox=[{x1},{y1},{x2},{y2}]: {display_text}"
                 )
                 
         except Exception as e:
-            logger.warning(f"[{session_id}] Failed to log merge_step conversation: {e}")
+            logger.warning(f"[{session_id}] Failed to log merge_step conversation: {e}", exc_info=True)
 
     def _log_screenshot_dialogs(
         self,
@@ -329,11 +357,24 @@ class ScreenshotParserService:
         
         llm_result = None
         winning_strategy = None
+        all_results = []  # Store all completed results
+        
+        # Get debug settings
+        from app.core.config import settings
+        wait_for_all = settings.debug_config.race_wait_all
+        log_race = settings.debug_config.log_race_strategy
         
         try:
             pending = {multimodal_task, premium_task}
             
-            while pending and llm_result is None:
+            # Wait for all tasks or just first valid one based on debug setting
+            while pending:
+                # If we already have a winner and not in debug mode, cancel remaining
+                if llm_result is not None and not wait_for_all:
+                    if log_race:
+                        logger.info(f"[{session_id}] {task_name}: Winner found, cancelling remaining tasks")
+                    break
+                
                 done, pending = await asyncio.wait(
                     pending,
                     return_when=asyncio.FIRST_COMPLETED
@@ -350,43 +391,44 @@ class ScreenshotParserService:
                             parsed_json = parse_json_with_markdown(result.text)
                             
                             # Log the response for debugging
-                            logger.info(
-                                f"[{session_id}] {task_name}: {strategy} returned JSON with keys: "
-                                f"{list(parsed_json.keys()) if isinstance(parsed_json, dict) else type(parsed_json)}"
-                            )
+                            if log_race:
+                                logger.info(
+                                    f"[{session_id}] {task_name}: {strategy} returned JSON with keys: "
+                                    f"{list(parsed_json.keys()) if isinstance(parsed_json, dict) else type(parsed_json)}"
+                                )
                             
-                            if validator(parsed_json):
+                            # Log extracted data based on debug settings
+                            if task_name == "merge_step" and settings.debug_config.log_merge_step_extraction:
+                                self._log_merge_step_conversation(
+                                    session_id=session_id,
+                                    strategy=strategy,
+                                    model=result.model,
+                                    parsed_json=parsed_json
+                                )
+                            elif task_name == "screenshot_parse" and settings.debug_config.log_screenshot_parse:
+                                self._log_screenshot_dialogs(
+                                    session_id=session_id,
+                                    strategy=strategy,
+                                    model=result.model,
+                                    parsed_json=parsed_json
+                                )
+                            
+                            # Check if valid and store
+                            is_valid = validator(parsed_json)
+                            all_results.append((strategy, result, is_valid))
+                            
+                            # If this is the first valid result, mark it as winner
+                            if is_valid and llm_result is None:
                                 llm_result = result
                                 winning_strategy = strategy
-                                logger.info(f"[{session_id}] {task_name}: {strategy} won")
-                                
-                                # Log extracted conversation details for merge_step
-                                if task_name == "merge_step":
-                                    self._log_merge_step_conversation(
-                                        session_id=session_id,
-                                        strategy=strategy,
-                                        model=result.model,
-                                        parsed_json=parsed_json
-                                    )
-                                # Log extracted dialogs for screenshot_parse
-                                elif task_name == "screenshot_parse":
-                                    self._log_screenshot_dialogs(
-                                        session_id=session_id,
-                                        strategy=strategy,
-                                        model=result.model,
-                                        parsed_json=parsed_json
-                                    )
-                                
-                                break
+                                if log_race:
+                                    logger.info(f"[{session_id}] {task_name}: {strategy} won (first valid)")
+                            elif is_valid:
+                                if log_race:
+                                    logger.info(f"[{session_id}] {task_name}: {strategy} also valid (but came second)")
                             else:
-                                logger.warning(
-                                    f"[{session_id}] {task_name}: {strategy} invalid, waiting"
-                                )
-                                # Log full response for debugging validation failures
-                                logger.warning(
-                                    f"[{session_id}] {task_name}: {strategy} full response: "
-                                    f"{json.dumps(parsed_json, indent=2)}"
-                                )
+                                if log_race:
+                                    logger.warning(f"[{session_id}] {task_name}: {strategy} invalid")
                         except (json.JSONDecodeError, KeyError) as e:
                             logger.warning(
                                 f"[{session_id}] {task_name}: {strategy} bad JSON: {e}"
@@ -394,21 +436,24 @@ class ScreenshotParserService:
                     except Exception as e:
                         logger.warning(f"[{session_id}] {task_name}: Task failed: {e}")
             
-            # Cancel remaining tasks
-            for task in pending:
-                task.cancel()
-                try:
-                    await task
-                except asyncio.CancelledError:
-                    pass
+            # Cancel remaining tasks if not waiting for all
+            if not wait_for_all:
+                for task in pending:
+                    task.cancel()
+                    try:
+                        await task
+                    except asyncio.CancelledError:
+                        pass
             
             if llm_result is None:
                 raise ValueError(f"Both calls failed for {task_name}")
             
-            logger.info(
-                f"[{session_id}] {task_name} race done: {winning_strategy}, "
-                f"model={llm_result.model}"
-            )
+            if log_race:
+                logger.info(
+                    f"[{session_id}] {task_name} race done: {winning_strategy} won, "
+                    f"model={llm_result.model}, total_results={len(all_results)}, "
+                    f"wait_all={wait_for_all}"
+                )
             
             return winning_strategy, llm_result
             

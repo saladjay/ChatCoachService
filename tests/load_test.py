@@ -137,6 +137,7 @@ class LoadTester:
         image_url: str | None = None,
         disable_cache: bool = False,
         sign_secret: str = "1a57ef4a6c2a433f8824f645abc0a18a",
+        language: str = "en",
     ):
         """Initialize load tester.
         
@@ -146,12 +147,14 @@ class LoadTester:
             image_url: Optional custom image URL to test
             disable_cache: If True, bypass cache by using unique session IDs
             sign_secret: Secret for generating sign (default from config.yaml)
+            language: Language code for replies (en, zh, etc.)
         """
         self.base_url = base_url.rstrip('/')
         self.timeout = timeout
         self.image_url = image_url
         self.disable_cache = disable_cache
         self.sign_secret = sign_secret
+        self.language = language
         self.stats = LoadTestStats()
         # Use timestamp to ensure unique counters across test runs
         self._request_counter = int(time.time() * 1000)  # milliseconds since epoch
@@ -186,6 +189,7 @@ class LoadTester:
                         disable_cache=True,
                         request_index=self._request_counter,
                         sign_secret=self.sign_secret,
+                        language=self.language,
                     )
                     self._request_counter += 1
                 
@@ -264,6 +268,7 @@ class LoadTester:
         print(f"  Total Requests:    {num_requests}")
         print(f"  Concurrent:        {concurrent}")
         print(f"  Method:            {method}")
+        print(f"  Language:          {self.language}")
         if self.image_url:
             print(f"  Image URL:         {self.image_url}")
         if self.disable_cache:
@@ -395,6 +400,7 @@ def create_test_payload(
     disable_cache: bool = False,
     request_index: int = 0,
     sign_secret: str = "1a57ef4a6c2a433f8824f645abc0a18a",
+    language: str = "en",
 ) -> Dict[str, Any]:
     """Create a test payload for the predict endpoint.
     
@@ -403,6 +409,7 @@ def create_test_payload(
         disable_cache: If True, use unique session_id to bypass cache
         request_index: Request index for unique session_id generation
         sign_secret: Secret for generating sign (default from config.yaml)
+        language: Language code (en, zh, etc.)
     
     Returns:
         Test payload dictionary
@@ -420,7 +427,7 @@ def create_test_payload(
         "user_id": "load_test_user",
         "session_id": session_id,
         "request_id": f"load_test_request_{request_index}",
-        "language": "en",
+        "language": language,
         "scene": 1,
         "scene_analysis": True,
         "reply": True,
@@ -452,6 +459,8 @@ async def main():
     parser.add_argument("--disable-cache", action="store_true", help="Disable cache by using unique session IDs")
     parser.add_argument("--sign-secret", type=str, default="1a57ef4a6c2a433f8824f645abc0a18a", 
                         help="Sign secret for request validation (default from config.yaml)")
+    parser.add_argument("--language", type=str, default="en", 
+                        help="Language code for replies (en, zh, etc.)")
     
     args = parser.parse_args()
     
@@ -536,6 +545,7 @@ async def main():
         image_url=args.image_url,
         disable_cache=args.disable_cache,
         sign_secret=args.sign_secret,
+        language=args.language,
     )
     
     # Health check test
@@ -556,6 +566,7 @@ async def main():
         disable_cache=args.disable_cache,
         request_index=0,
         sign_secret=args.sign_secret,
+        language=args.language,
     )
     
     # Run appropriate test

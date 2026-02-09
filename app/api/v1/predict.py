@@ -778,7 +778,6 @@ async def _scenario_analysis(
         logger.info("Scene analysis requested, calling Orchestrator")
         results = []
         for resources, dialog, list_image_result in analysis_queue:
-            logger.info(f"Dialog: {dialog}")
             # Requirement 9.2: Format dialogs as conversation history
             conversation = []
             for dialog_item in dialog:
@@ -787,7 +786,6 @@ async def _scenario_analysis(
                     "text": dialog_item.text,
                 })
             
-            logger.info(f'conversation:{conversation}')
             # Requirement 9.3: Call Orchestrator with user_id, conversation, language
             if orchestrator is not None:
                 from app.models.api import GenerateReplyRequest
@@ -917,7 +915,6 @@ async def _generate_reply(
         suggested_replies: list[str] = []
         
         for resource_index, (resources, dialog, list_image_result) in enumerate(analysis_queue):
-            logger.info(f"Dialog: {dialog}")
             # Requirement 9.2: Format dialogs as conversation history
             conversation = []
             for dialog_item in dialog:
@@ -926,7 +923,6 @@ async def _generate_reply(
                     "text": dialog_item.text,
                 })
             
-            logger.info(f'conversation:{conversation}')
             # Requirement 9.3: Call Orchestrator with user_id, conversation, language
             if orchestrator is not None:
                 from app.models.api import GenerateReplyRequest
