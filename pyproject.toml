@@ -20,6 +20,7 @@ dependencies = [
     "google-cloud-aiplatform>=1.136.0",
     "dashscope>=1.25.11",
     "pillow>=12.1.0",
+    "json-repair>=0.57.1",
 ]
 
 [project.optional-dependencies]
