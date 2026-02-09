@@ -254,10 +254,10 @@ class Orchestrator:
             # No cache, perform merge_step analysis
             logger.info("Performing merge_step analysis with LLM")
             
-            # Get merge_step prompt
-            from app.services.prompt_manager import get_prompt_manager, PromptType, PromptVersion
+            # Get merge_step prompt (use active version)
+            from app.services.prompt_manager import get_prompt_manager, PromptType
             pm = get_prompt_manager()
-            prompt = pm.get_prompt_version(PromptType.MERGE_STEP, PromptVersion.V1_ORIGINAL)
+            prompt = pm.get_active_prompt(PromptType.MERGE_STEP)
             
             if not prompt:
                 logger.error("merge_step prompt not found, falling back to separate calls")
