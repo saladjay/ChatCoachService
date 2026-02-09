@@ -68,6 +68,102 @@ class ScreenshotParserService:
         self.llm_adapter = llm_adapter
         self.result_normalizer = result_normalizer
 
+    def _log_merge_step_conversation(
+        self,
+        session_id: str,
+        strategy: str,
+        model: str,
+        parsed_json: dict
+    ) -> None:
+        """Log extracted conversation details from merge_step analysis.
+        
+        Args:
+            session_id: Session ID for logging
+            strategy: Strategy name (multimodal/premium)
+            model: Model name
+            parsed_json: Parsed JSON response
+        """
+        try:
+            conversation = parsed_json.get("conversation", [])
+            participants = parsed_json.get("participants", {})
+            
+            # Log participants info
+            user_nickname = participants.get("user", {}).get("nickname", "Unknown")
+            target_nickname = participants.get("target", {}).get("nickname", "Unknown")
+            
+            logger.info(
+                f"[{session_id}] merge_step [{strategy}|{model}] Participants: "
+                f"User='{user_nickname}', Target='{target_nickname}'"
+            )
+            
+            # Log conversation details
+            logger.info(
+                f"[{session_id}] merge_step [{strategy}|{model}] Extracted {len(conversation)} messages:"
+            )
+            
+            for idx, msg in enumerate(conversation, 1):
+                speaker = msg.get("speaker", "unknown")
+                content = msg.get("content", "")
+                position = msg.get("position", "unknown")
+                
+                # Truncate long messages for readability
+                display_content = content[:100] + "..." if len(content) > 100 else content
+                
+                logger.info(
+                    f"[{session_id}]   [{idx}] {speaker} ({position}): {display_content}"
+                )
+                
+        except Exception as e:
+            logger.warning(f"[{session_id}] Failed to log merge_step conversation: {e}")
+
+    def _log_screenshot_dialogs(
+        self,
+        session_id: str,
+        strategy: str,
+        model: str,
+        parsed_json: dict
+    ) -> None:
+        """Log extracted dialogs from screenshot parsing.
+        
+        Args:
+            session_id: Session ID for logging
+            strategy: Strategy name (multimodal/premium)
+            model: Model name
+            parsed_json: Parsed JSON response
+        """
+        try:
+            dialogs = parsed_json.get("dialogs", [])
+            participants = parsed_json.get("participants", {})
+            
+            # Log participants info
+            user_nickname = participants.get("user", {}).get("nickname", "Unknown")
+            target_nickname = participants.get("target", {}).get("nickname", "Unknown")
+            
+            logger.info(
+                f"[{session_id}] screenshot_parse [{strategy}|{model}] Participants: "
+                f"User='{user_nickname}', Target='{target_nickname}'"
+            )
+            
+            # Log dialog details
+            logger.info(
+                f"[{session_id}] screenshot_parse [{strategy}|{model}] Extracted {len(dialogs)} dialogs:"
+            )
+            
+            for idx, dialog in enumerate(dialogs, 1):
+                speaker = dialog.get("speaker", "unknown")
+                text = dialog.get("text", "")
+                position = dialog.get("position", "unknown")
+                
+                # Truncate long messages for readability
+                display_text = text[:100] + "..." if len(text) > 100 else text
+                
+                logger.info(
+                    f"[{session_id}]   [{idx}] {speaker} ({position}): {display_text}"
+                )
+                
+        except Exception as e:
+            logger.warning(f"[{session_id}] Failed to log screenshot dialogs: {e}")
+
     async def _race_multimodal_calls(
         self,
         prompt: str,
@@ -263,6 +359,24 @@ class ScreenshotParserService:
                                 llm_result = result
                                 winning_strategy = strategy
                                 logger.info(f"[{session_id}] {task_name}: {strategy} won")
+                                
+                                # Log extracted conversation details for merge_step
+                                if task_name == "merge_step":
+                                    self._log_merge_step_conversation(
+                                        session_id=session_id,
+                                        strategy=strategy,
+                                        model=result.model,
+                                        parsed_json=parsed_json
+                                    )
+                                # Log extracted dialogs for screenshot_parse
+                                elif task_name == "screenshot_parse":
+                                    self._log_screenshot_dialogs(
+                                        session_id=session_id,
+                                        strategy=strategy,
+                                        model=result.model,
+                                        parsed_json=parsed_json
+                                    )
+                                
                                 break
                             else:
                                 logger.warning(
