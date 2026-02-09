@@ -136,6 +136,16 @@
         "prompt_id": "merge_step_v1.0-original",
         "version": "v1.0-original",
         "created_at": "2026-02-05T00:00:00"
+      },
+      {
+        "prompt_id": "merge_step_v2.0-compact",
+        "version": "v2.0-compact",
+        "created_at": "2026-02-09T15:10:58.768924"
+      },
+      {
+        "prompt_id": "merge_step_v2.0-compact",
+        "version": "v2.0-compact",
+        "created_at": "2026-02-09T15:11:43.171837"
       }
     ]
   },
@@ -145,7 +155,8 @@
     "reply_generation": "reply_generation_v3.3",
     "trait_discovery": "trait_discovery_v1.0-original",
     "trait_mapping": "trait_mapping_v1.0-original",
-    "screenshot_parse": "screenshot_parse_v2.0-compact"
+    "screenshot_parse": "screenshot_parse_v2.0-compact",
+    "merge_step": "merge_step_v2.0-compact"
   },
   "version_history": [
     {
@@ -369,6 +380,30 @@
       "action": "register",
       "timestamp": "2026-02-05T00:00:00",
       "author": "system"
+    },
+    {
+      "prompt_id": "merge_step_v2.0-compact",
+      "action": "register",
+      "timestamp": "2026-02-09T15:10:58.769443",
+      "author": "cli_user"
+    },
+    {
+      "prompt_id": "merge_step_v2.0-compact",
+      "action": "activate",
+      "timestamp": "2026-02-09T15:10:58.777695",
+      "author": "cli_user"
+    },
+    {
+      "prompt_id": "merge_step_v2.0-compact",
+      "action": "register",
+      "timestamp": "2026-02-09T15:11:43.172362",
+      "author": "cli_user"
+    },
+    {
+      "prompt_id": "merge_step_v2.0-compact",
+      "action": "activate",
+      "timestamp": "2026-02-09T15:11:43.181825",
+      "author": "cli_user"
     }
   ]
 }
