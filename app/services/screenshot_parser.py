@@ -68,6 +68,235 @@ class ScreenshotParserService:
         self.llm_adapter = llm_adapter
         self.result_normalizer = result_normalizer
 
+    async def _race_multimodal_calls(
+        self,
+        prompt: str,
+        image_data: str,
+        image_type: str,
+        mime_type: str,
+        user_id: str,
+        session_id: str,
+        provider: str,
+        validator: callable,
+        task_name: str = "multimodal_race",
+    ) -> tuple[str, Any]:
+        """
+        Race two multimodal LLM calls and return the first valid result.
+        
+        This method simultaneously calls:
+        1. Default multimodal model (fast, lower quality)
+        2. Premium model (slower, higher quality)
+        
+        And returns whichever completes first with valid data.
+        
+        Args:
+            prompt: Text prompt for LLM
+            image_data: Image URL or base64 string
+            image_type: "url" or "base64"
+            mime_type: Image MIME type (e.g., "image/jpeg")
+            user_id: User ID for billing/logging
+            session_id: Session ID for logging
+            provider: Provider name (e.g., "openrouter")
+            validator: Function to validate parsed JSON result
+            task_name: Name for logging (e.g., "screenshot_parse")
+            
+        Returns:
+            Tuple of (winning_strategy, llm_result)
+            
+        Raises:
+            ValueError: If both calls fail or return invalid data
+        """
+        import asyncio
+        
+        # Define async function for multimodal call
+        async def call_multimodal_llm():
+            step_id = uuid.uuid4().hex
+            start_time = time.time()
+            
+            trace_logger.log_event({
+                "level": "debug",
+                "type": "step_start",
+                "step_id": step_id,
+                "step_name": f"{task_name}_multimodal",
+                "task_type": task_name,
+                "session_id": session_id,
+                "user_id": user_id,
+            })
+            
+            try:
+                result = await self.llm_adapter.call_multimodal(
+                    prompt=prompt,
+                    image_data=image_data,
+                    image_type=image_type,
+                    mime_type=mime_type,
+                    user_id=user_id,
+                )
+                
+                duration_ms = int((time.time() - start_time) * 1000)
+                trace_logger.log_event({
+                    "level": "debug",
+                    "type": "step_end",
+                    "step_id": step_id,
+                    "step_name": f"{task_name}_multimodal",
+                    "session_id": session_id,
+                    "duration_ms": duration_ms,
+                    "provider": result.provider,
+                    "model": result.model,
+                    "status": "success",
+                })
+                
+                logger.info(
+                    f"[{session_id}] {task_name} multimodal completed in {duration_ms}ms "
+                    f"(model: {result.model})"
+                )
+                return ("multimodal", result)
+                
+            except Exception as e:
+                duration_ms = int((time.time() - start_time) * 1000)
+                trace_logger.log_event({
+                    "level": "error",
+                    "type": "step_end",
+                    "step_id": step_id,
+                    "step_name": f"{task_name}_multimodal",
+                    "session_id": session_id,
+                    "duration_ms": duration_ms,
+                    "status": "error",
+                    "error": str(e),
+                })
+                logger.warning(f"[{session_id}] {task_name} multimodal failed: {e}")
+                raise
+        
+        # Define async function for premium call
+        async def call_premium_llm():
+            step_id = uuid.uuid4().hex
+            start_time = time.time()
+            
+            trace_logger.log_event({
+                "level": "debug",
+                "type": "step_start",
+                "step_id": step_id,
+                "step_name": f"{task_name}_premium",
+                "task_type": task_name,
+                "session_id": session_id,
+                "user_id": user_id,
+            })
+            
+            try:
+                result = await self.llm_adapter.call_multimodal(
+                    prompt=prompt,
+                    image_data=image_data,
+                    image_type=image_type,
+                    mime_type=mime_type,
+                    user_id=user_id,
+                    provider=provider,
+                    model="google/gemini-2.0-flash-001",
+                )
+                
+                duration_ms = int((time.time() - start_time) * 1000)
+                trace_logger.log_event({
+                    "level": "debug",
+                    "type": "step_end",
+                    "step_id": step_id,
+                    "step_name": f"{task_name}_premium",
+                    "session_id": session_id,
+                    "duration_ms": duration_ms,
+                    "provider": result.provider,
+                    "model": result.model,
+                    "status": "success",
+                })
+                
+                logger.info(
+                    f"[{session_id}] {task_name} premium completed in {duration_ms}ms "
+                    f"(model: {result.model})"
+                )
+                return ("premium", result)
+                
+            except Exception as e:
+                duration_ms = int((time.time() - start_time) * 1000)
+                trace_logger.log_event({
+                    "level": "error",
+                    "type": "step_end",
+                    "step_id": step_id,
+                    "step_name": f"{task_name}_premium",
+                    "session_id": session_id,
+                    "duration_ms": duration_ms,
+                    "status": "error",
+                    "error": str(e),
+                })
+                logger.warning(f"[{session_id}] {task_name} premium failed: {e}")
+                raise
+        
+        # Start both tasks simultaneously
+        logger.info(f"[{session_id}] Starting {task_name} race: multimodal vs premium")
+        multimodal_task = asyncio.create_task(call_multimodal_llm())
+        premium_task = asyncio.create_task(call_premium_llm())
+        
+        llm_result = None
+        winning_strategy = None
+        
+        try:
+            pending = {multimodal_task, premium_task}
+            
+            while pending and llm_result is None:
+                done, pending = await asyncio.wait(
+                    pending,
+                    return_when=asyncio.FIRST_COMPLETED
+                )
+                
+                for task in done:
+                    try:
+                        strategy, result = await task
+                        
+                        import json
+                        from app.api.v1.predict import parse_json_with_markdown
+                        
+                        try:
+                            parsed_json = parse_json_with_markdown(result.text)
+                            
+                            if validator(parsed_json):
+                                llm_result = result
+                                winning_strategy = strategy
+                                logger.info(f"[{session_id}] {task_name}: {strategy} won")
+                                break
+                            else:
+                                logger.warning(
+                                    f"[{session_id}] {task_name}: {strategy} invalid, waiting"
+                                )
+                        except (json.JSONDecodeError, KeyError) as e:
+                            logger.warning(
+                                f"[{session_id}] {task_name}: {strategy} bad JSON: {e}"
+                            )
+                    except Exception as e:
+                        logger.warning(f"[{session_id}] {task_name}: Task failed: {e}")
+            
+            # Cancel remaining tasks
+            for task in pending:
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+            
+            if llm_result is None:
+                raise ValueError(f"Both calls failed for {task_name}")
+            
+            logger.info(
+                f"[{session_id}] {task_name} race done: {winning_strategy}, "
+                f"model={llm_result.model}"
+            )
+            
+            return winning_strategy, llm_result
+            
+        except Exception as e:
+            for task in [multimodal_task, premium_task]:
+                if not task.done():
+                    task.cancel()
+                    try:
+                        await task
+                    except asyncio.CancelledError:
+                        pass
+            raise
+
     async def parse_screenshot(
         self,
         request: ParseScreenshotRequest,
@@ -103,10 +332,16 @@ class ScreenshotParserService:
             image_format = settings.llm.multimodal_image_format
             
             try:
-                # Fetch image (compress only if using base64 format)
-                # When using URL format, we don't need to compress since the LLM provider
-                # will download the original image directly from the URL
-                compress = (image_format == "base64")
+                # Fetch image (compress based on configuration)
+                # When using URL format, compression is skipped by default
+                # When using base64 format, compression depends on LLM_MULTIMODAL_IMAGE_COMPRESS setting
+                if image_format == "url":
+                    # URL format: Never compress (LLM downloads directly)
+                    compress = False
+                else:
+                    # Base64 format: Use configuration setting
+                    compress = settings.llm.multimodal_image_compress
+                
                 fetched_image = await self.image_fetcher.fetch_image(
                     request.image_url,
                     compress=compress
@@ -142,74 +377,55 @@ class ScreenshotParserService:
                     session_id=session_id,
                 )
             
-            # Step 3: Call multimodal LLM (error code 1002, 1003)
-            logger.info(f"[{session_id}] Calling multimodal LLM")
+            # Step 3: Call multimodal LLM with race strategy (error code 1002, 1003)
+            logger.info(f"[{session_id}] Starting LLM race: multimodal vs premium")
             
-            # Generate step ID for trace logging
-            step_id = uuid.uuid4().hex
             llm_start_time = time.time()
             
-            # Log LLM call start with trace
-            trace_logger.log_event({
-                "level": "debug",
-                "type": "step_start",
-                "step_id": step_id,
-                "step_name": "screenshot_parse_llm",
-                "task_type": "screenshot_parse",
-                "session_id": session_id,
-                "prompt": prompt if trace_logger.should_log_prompt() else "[prompt logging disabled]",
-                "image_size": f"{fetched_image.width}x{fetched_image.height}",
-            })
+            # Prepare image data based on configuration
+            if image_format == "url":
+                image_data = request.image_url
+                image_type = "url"
+                logger.info(f"[{session_id}] Using URL format for LLM calls")
+            else:
+                image_data = fetched_image.base64_data
+                image_type = "base64"
+                logger.info(f"[{session_id}] Using base64 format for LLM calls")
+            
+            # Define validator for screenshot parse results
+            def validate_screenshot_result(parsed_json: dict) -> bool:
+                """Check if result has valid dialogs."""
+                dialogs = parsed_json.get("dialogs", [])
+                is_valid = dialogs and len(dialogs) > 0
+                if is_valid:
+                    logger.info(f"[{session_id}] Found {len(dialogs)} dialogs")
+                return is_valid
             
             try:
-                # Choose image data and type based on configuration
-                # base64: Compress and encode image (recommended for most providers)
-                # url: Send image URL directly (faster but not all providers support it)
-                if image_format == "url":
-                    image_data = request.image_url
-                    image_type = "url"
-                    logger.info(f"[{session_id}] Using URL format for multimodal LLM")
-                else:
-                    image_data = fetched_image.base64_data
-                    image_type = "base64"
-                    logger.info(f"[{session_id}] Using base64 format for multimodal LLM")
+                from app.core.config import settings
                 
-                llm_result = await self.llm_adapter.call_multimodal(
+                winning_strategy, llm_result = await self._race_multimodal_calls(
                     prompt=prompt,
                     image_data=image_data,
                     image_type=image_type,
                     mime_type=f"image/{fetched_image.format.lower()}",
                     user_id=session_id,
+                    session_id=session_id,
+                    provider=settings.llm.default_provider,
+                    validator=validate_screenshot_result,
+                    task_name="screenshot_parse",
                 )
                 
                 llm_duration_ms = int((time.time() - llm_start_time) * 1000)
                 
-                # Log LLM call end with trace
-                trace_logger.log_event({
-                    "level": "debug",
-                    "type": "step_end",
-                    "step_id": step_id,
-                    "step_name": "screenshot_parse_llm",
-                    "task_type": "screenshot_parse",
-                    "session_id": session_id,
-                    "duration_ms": llm_duration_ms,
-                    "provider": llm_result.provider,
-                    "model": llm_result.model,
-                    "input_tokens": llm_result.input_tokens,
-                    "output_tokens": llm_result.output_tokens,
-                    "cost_usd": llm_result.cost_usd,
-                    "status": "success",
-                })
-                
                 logger.info(
-                    f"[{session_id}] LLM call successful: "
-                    f"provider={llm_result.provider}, "
-                    f"model={llm_result.model}, "
+                    f"[{session_id}] Race done: {winning_strategy} won in {llm_duration_ms}ms, "
+                    f"provider={llm_result.provider}, model={llm_result.model}, "
                     f"tokens={llm_result.input_tokens}+{llm_result.output_tokens}, "
                     f"cost=${llm_result.cost_usd:.4f}"
                 )
                 
-                # Parse JSON from LLM response text
+                # Parse JSON from LLM response text (already validated in race)
                 import json
                 try:
                     parsed_json = json.loads(llm_result.text)
@@ -217,22 +433,20 @@ class ScreenshotParserService:
                     # Try to extract JSON from markdown code blocks or other formats
                     parsed_json = self._parse_json_response(llm_result.text)
                 
-            except RuntimeError as e:
+            except ValueError as e:
+                # This catches the "Both calls failed" error from race strategy
                 llm_duration_ms = int((time.time() - llm_start_time) * 1000)
                 error_msg = str(e)
                 
-                # Log LLM call error with trace
-                trace_logger.log_event({
-                    "level": "error",
-                    "type": "step_error",
-                    "step_id": step_id,
-                    "step_name": "screenshot_parse_llm",
-                    "task_type": "screenshot_parse",
-                    "session_id": session_id,
-                    "duration_ms": llm_duration_ms,
-                    "error": error_msg,
-                    "status": "failed",
-                })
+                logger.error(f"[{session_id}] LLM race failed: {e}")
+                return self._create_error_response(
+                    code=1002,
+                    message=f"LLM API call failed: {error_msg}",
+                    session_id=session_id,
+                )
+            except RuntimeError as e:
+                llm_duration_ms = int((time.time() - llm_start_time) * 1000)
+                error_msg = str(e)
                 
                 # Determine if it's a JSON parsing error (1003) or LLM call error (1002)
                 if "parse" in error_msg.lower() or "json" in error_msg.lower():
