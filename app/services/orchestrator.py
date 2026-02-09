@@ -960,6 +960,12 @@ class Orchestrator:
         Requirements: 2.3, 2.4, 4.2
         """
         quality = self._get_effective_quality(exec_ctx, request.quality)
+        
+        # Force premium quality for reply generation
+        # Override to use more expensive/better models
+        quality = "premium"  # Use premium quality models for better replies
+        logger.info(f"Using premium quality model for reply generation")
+        
         last_reply_result = None
         last_intimacy_result = None
 
