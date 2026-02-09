@@ -130,6 +130,83 @@ class Orchestrator:
         self.billing_config = billing_config or BillingConfig()
         self.strategy_planner = strategy_planner
 
+    def _log_merge_step_extraction(
+        self,
+        session_id: str,
+        strategy: str,
+        model: str,
+        parsed_json: dict
+    ) -> None:
+        """Log extracted conversation details from merge_step analysis.
+        
+        Args:
+            session_id: Session ID for logging
+            strategy: Strategy name (multimodal/premium)
+            model: Model name
+            parsed_json: Parsed merge_step JSON response
+        """
+        # Check if logging is enabled
+        from app.core.config import settings
+        if not settings.debug_config.log_merge_step_extraction:
+            return
+        
+        try:
+            # Extract bubbles from screenshot_parse section
+            screenshot_parse = parsed_json.get("screenshot_parse", {})
+            bubbles = screenshot_parse.get("bubbles", [])
+            participants = screenshot_parse.get("participants", {})
+            
+            # Log participants info
+            self_info = participants.get("self", {})
+            other_info = participants.get("other", {})
+            user_nickname = self_info.get("nickname", "Unknown")
+            target_nickname = other_info.get("nickname", "Unknown")
+            
+            logger.info(
+                f"[{session_id}] merge_step [{strategy}|{model}] Participants: "
+                f"User='{user_nickname}', Target='{target_nickname}'"
+            )
+            
+            # Sort bubbles by y-coordinate (top to bottom)
+            sorted_bubbles = sorted(bubbles, key=lambda b: b.get("bbox", {}).get("y1", 0))
+            
+            # Get layout info to understand role mapping
+            layout = screenshot_parse.get("layout", {})
+            left_role = layout.get("left_role", "unknown")
+            right_role = layout.get("right_role", "unknown")
+            
+            # Log bubble details with layout context
+            logger.info(
+                f"[{session_id}] 📊 FINAL [{strategy}|{model}] Layout: left={left_role}, right={right_role}"
+            )
+            logger.info(
+                f"[{session_id}] 📊 FINAL [{strategy}|{model}] Extracted {len(sorted_bubbles)} bubbles (sorted top→bottom):"
+            )
+            
+            for idx, bubble in enumerate(sorted_bubbles, 1):
+                sender = bubble.get("sender", "unknown")
+                text = bubble.get("text", "")
+                column = bubble.get("column", "unknown")
+                bbox = bubble.get("bbox", {})
+                x1 = bbox.get("x1", 0)
+                y1 = bbox.get("y1", 0)
+                x2 = bbox.get("x2", 0)
+                y2 = bbox.get("y2", 0)
+                
+                # Show expected role based on layout
+                expected_role = left_role if column == "left" else right_role
+                role_match = "✓" if sender == expected_role else "✗"
+                
+                # Truncate long messages for readability
+                display_text = text[:100] + "..." if len(text) > 100 else text
+                
+                logger.info(
+                    f"[{session_id}] 📊   [{idx}] {sender}({column}) {role_match} "
+                    f"bbox=[{x1},{y1},{x2},{y2}]: {display_text}"
+                )
+                
+        except Exception as e:
+            logger.warning(f"[{session_id}] Failed to log merge_step extraction: {e}", exc_info=True)
 
     async def scenario_analysis(
         self,
@@ -242,6 +319,8 @@ class Orchestrator:
         
         try:
             # Check cache first using traditional field names for cache sharing
+            logger.info(f"[{request.conversation_id}] merge_step_analysis: force_regenerate={request.force_regenerate}, resource={request.resource}")
+            
             cached_context = await self._get_cached_payload(request, "context_analysis")
             cached_scene = await self._get_cached_payload(request, "scene_analysis")
             
@@ -249,6 +328,18 @@ class Orchestrator:
                 logger.info("Using cached merge_step results (from traditional cache)")
                 context = ContextResult(**cached_context)
                 scene = SceneAnalysisResult(**cached_scene)
+                
+                # Log cached conversation details
+                logger.info(
+                    f"[{request.conversation_id}] merge_step [CACHED] "
+                    f"Conversation: {len(context.conversation)} messages"
+                )
+                for idx, msg in enumerate(context.conversation, 1):
+                    display_content = msg.content[:100] + "..." if len(msg.content) > 100 else msg.content
+                    logger.info(
+                        f"[{request.conversation_id}]   [{idx}] {msg.speaker}: {display_content}"
+                    )
+                
                 return context, scene
             
             # No cache, perform merge_step analysis
@@ -351,6 +442,19 @@ class Orchestrator:
                 try:
                     parsed_json = parse_json_with_markdown(llm_result.text)
                     raw_text = llm_result.text
+                    
+                    logger.info(f"About to call _log_merge_step_extraction for session {request.conversation_id}")
+                    
+                    # Log extracted conversation details
+                    self._log_merge_step_extraction(
+                        session_id=request.conversation_id,
+                        strategy=winning_strategy,
+                        model=llm_result.model,
+                        parsed_json=parsed_json
+                    )
+                    
+                    logger.info(f"Finished calling _log_merge_step_extraction")
+                    
                 except json.JSONDecodeError as e:
                     logger.error(f"Failed to parse JSON from merge_step: {e}")
                     raise RuntimeError(f"Failed to parse JSON: {str(e)}")
