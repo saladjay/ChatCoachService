@@ -8,6 +8,7 @@ into the separate data structures used by the existing services:
 - SceneAnalysisResult (for scene_analyzer)
 """
 
+import json
 import logging
 from typing import Dict, Any
 
@@ -358,18 +359,27 @@ class MergeStepAdapter:
             True if valid, False otherwise
         """
         try:
+            logger.info(f"Starting validation of merge_output with keys: {list(merge_output.keys())}")
+            
             # Check top-level keys
             required_keys = ["screenshot_parse", "conversation_analysis", "scenario_decision"]
             for key in required_keys:
                 if key not in merge_output:
                     logger.error(f"Missing required key: {key}")
+                    logger.error(f"Actual keys: {list(merge_output.keys())}")
+                    logger.error(f"Full output: {json.dumps(merge_output, indent=2)[:1000]}")
                     return False
+            
+            logger.info("Top-level keys validated successfully")
             
             # Check screenshot_parse structure
             screenshot = merge_output["screenshot_parse"]
             if "bubbles" not in screenshot:
                 logger.error("Missing 'bubbles' in screenshot_parse")
+                logger.error(f"screenshot_parse keys: {list(screenshot.keys())}")
                 return False
+            
+            logger.info(f"screenshot_parse validated: {len(screenshot.get('bubbles', []))} bubbles")
             
             # Check conversation_analysis structure
             conversation = merge_output["conversation_analysis"]
@@ -377,20 +387,31 @@ class MergeStepAdapter:
             for key in required_conv_keys:
                 if key not in conversation:
                     logger.error(f"Missing '{key}' in conversation_analysis")
+                    logger.error(f"conversation_analysis keys: {list(conversation.keys())}")
                     return False
+            
+            logger.info("conversation_analysis validated successfully")
             
             # Check scenario_decision structure
             scenario = merge_output["scenario_decision"]
+            logger.info(f"scenario_decision keys: {list(scenario.keys())}")
             required_scenario_keys = ["relationship_state", "recommended_scenario"]
             for key in required_scenario_keys:
                 if key not in scenario:
                     logger.error(f"Missing '{key}' in scenario_decision")
+                    logger.error(f"scenario_decision keys: {list(scenario.keys())}")
+                    logger.error(f"scenario_decision content: {json.dumps(scenario, indent=2)}")
                     return False
             
+            logger.info("scenario_decision validated successfully")
+            logger.info("✓ All validation checks passed!")
             return True
             
         except Exception as e:
-            logger.error(f"Error validating merge_output: {e}")
+            logger.error(f"Error validating merge_output: {e}", exc_info=True)
+            logger.error(f"merge_output type: {type(merge_output)}")
+            if isinstance(merge_output, dict):
+                logger.error(f"merge_output keys: {list(merge_output.keys())}")
             return False
 
 

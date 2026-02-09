@@ -324,13 +324,12 @@ class Orchestrator:
             )
             
             # Define validator for merge_step results
+            from app.services.merge_step_adapter import MergeStepAdapter
+            merge_adapter = MergeStepAdapter()
+            
             def validate_merge_step_result(parsed_json: dict) -> bool:
-                """Check if result has valid conversation data."""
-                conversation = parsed_json.get("conversation", [])
-                is_valid = conversation and len(conversation) > 0
-                if is_valid:
-                    logger.info(f"Found {len(conversation)} messages")
-                return is_valid
+                """Check if result has valid merge_step structure."""
+                return merge_adapter.validate_merge_output(parsed_json)
             
             try:
                 winning_strategy, llm_result = await temp_parser._race_multimodal_calls(
@@ -422,8 +421,22 @@ class Orchestrator:
             if not adapter.validate_merge_output(parsed_json):
                 raise ValueError("Invalid merge_step output structure")
             
+            # Extract dialogs from screenshot_parse bubbles
+            screenshot_data = parsed_json.get("screenshot_parse", {})
+            bubbles = screenshot_data.get("bubbles", [])
+            
+            # Convert bubbles to dialog format
+            dialogs = []
+            for bubble in bubbles:
+                dialogs.append({
+                    "speaker": bubble.get("sender", "user"),
+                    "text": bubble.get("text", ""),
+                    "timestamp": None,
+                })
+            
+            logger.info(f"Extracted {len(dialogs)} dialogs from screenshot_parse bubbles")
+            
             # Convert to ContextResult
-            dialogs = request.dialogs
             context = adapter.to_context_result(parsed_json, dialogs)
             
             # Convert to SceneAnalysisResult (without strategies yet)

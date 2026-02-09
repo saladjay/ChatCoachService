@@ -253,6 +253,12 @@ class ScreenshotParserService:
                         try:
                             parsed_json = parse_json_with_markdown(result.text)
                             
+                            # Log the response for debugging
+                            logger.info(
+                                f"[{session_id}] {task_name}: {strategy} returned JSON with keys: "
+                                f"{list(parsed_json.keys()) if isinstance(parsed_json, dict) else type(parsed_json)}"
+                            )
+                            
                             if validator(parsed_json):
                                 llm_result = result
                                 winning_strategy = strategy
@@ -261,6 +267,11 @@ class ScreenshotParserService:
                             else:
                                 logger.warning(
                                     f"[{session_id}] {task_name}: {strategy} invalid, waiting"
+                                )
+                                # Log full response for debugging validation failures
+                                logger.warning(
+                                    f"[{session_id}] {task_name}: {strategy} full response: "
+                                    f"{json.dumps(parsed_json, indent=2)}"
                                 )
                         except (json.JSONDecodeError, KeyError) as e:
                             logger.warning(
