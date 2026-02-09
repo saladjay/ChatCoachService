@@ -113,11 +113,12 @@ def parse_json_with_markdown(text: str) -> dict:
     
     This function handles various formats with multiple fallback strategies:
     1. Direct JSON parsing
-    2. Markdown code block extraction (```json ... ```)
-    3. Simple code block extraction (``` ... ```)
-    4. JSON object extraction from text
-    5. Stack-based complete JSON extraction (most reliable)
-    6. Plain text wrapping (final fallback for reply generation)
+    2. Enhanced JSON repair (removes markdown, fixes brackets, trailing commas)
+    3. Markdown code block extraction (```json ... ```)
+    4. Simple code block extraction (``` ... ```)
+    5. JSON object extraction from text
+    6. Stack-based complete JSON extraction (most reliable)
+    7. Plain text wrapping (final fallback for reply generation)
     
     Args:
         text: The text to parse
@@ -137,7 +138,16 @@ def parse_json_with_markdown(text: str) -> dict:
     except json.JSONDecodeError:
         pass
     
-    # Strategy 2: Remove markdown JSON code blocks
+    # Strategy 2: Enhanced JSON repair (inspired by json-repair library)
+    # This handles common LLM issues: markdown wrappers, unclosed brackets, trailing commas
+    try:
+        repaired = _repair_json_string(text)
+        if repaired != text:  # Only try if we actually repaired something
+            return json.loads(repaired)
+    except (json.JSONDecodeError, ValueError):
+        pass
+    
+    # Strategy 3: Remove markdown JSON code blocks
     if "```json" in text:
         start = text.find("```json") + 7
         end = text.find("```", start)
@@ -146,9 +156,14 @@ def parse_json_with_markdown(text: str) -> dict:
             try:
                 return json.loads(extracted)
             except json.JSONDecodeError:
-                pass
+                # Try repairing the extracted content
+                try:
+                    repaired = _repair_json_string(extracted)
+                    return json.loads(repaired)
+                except (json.JSONDecodeError, ValueError):
+                    pass
     
-    # Strategy 3: Remove simple markdown code blocks
+    # Strategy 4: Remove simple markdown code blocks
     if "```" in text:
         start = text.find("```") + 3
         end = text.find("```", start)
@@ -157,9 +172,14 @@ def parse_json_with_markdown(text: str) -> dict:
             try:
                 return json.loads(extracted)
             except json.JSONDecodeError:
-                pass
+                # Try repairing the extracted content
+                try:
+                    repaired = _repair_json_string(extracted)
+                    return json.loads(repaired)
+                except (json.JSONDecodeError, ValueError):
+                    pass
     
-    # Strategy 4: Extract JSON object with simple regex
+    # Strategy 5: Extract JSON object with simple regex
     if "{" in text:
         start = text.find("{")
         end = text.rfind("}") + 1
@@ -168,16 +188,127 @@ def parse_json_with_markdown(text: str) -> dict:
             try:
                 return json.loads(extracted)
             except json.JSONDecodeError:
-                pass
+                # Try repairing the extracted content
+                try:
+                    repaired = _repair_json_string(extracted)
+                    return json.loads(repaired)
+                except (json.JSONDecodeError, ValueError):
+                    pass
     
-    # Strategy 5: Use stack-based extraction (most reliable)
+    # Strategy 6: Use stack-based extraction (most reliable)
     json_objects = _extract_complete_json_objects(text)
     for json_str in json_objects:
         try:
             return json.loads(json_str)
         except json.JSONDecodeError:
-            continue
+            # Try repairing each extracted object
+            try:
+                repaired = _repair_json_string(json_str)
+                return json.loads(repaired)
+            except (json.JSONDecodeError, ValueError):
+                continue
     
+    # Strategy 7: Final fallback - wrap plain text as JSON
+    # This handles cases where LLM returns acknowledgment text like "好的，我明白了。"
+    if original_text and len(original_text) < 500:  # Only wrap short responses
+        return _wrap_plain_text_as_json(original_text)
+    
+    # All strategies failed
+    raise json.JSONDecodeError(
+        f"Could not extract valid JSON from response after all attempts. "
+        f"Text preview: {original_text[:200]}...",
+        original_text,
+        0
+    )
+
+
+def _repair_json_string(text: str) -> str:
+    """Repair common JSON formatting issues from LLM responses.
+    
+    This function implements heuristics inspired by json-repair library to fix:
+    - Markdown code fences (```json ... ```)
+    - Unclosed brackets/braces
+    - Trailing commas
+    - Missing quotes around keys
+    - Incomplete strings
+    
+    Args:
+        text: Potentially malformed JSON string
+        
+    Returns:
+        Repaired JSON string
+    """
+    if not text:
+        return text
+    
+    original = text
+    text = text.strip()
+    
+    # Step 1: Remove markdown code fences
+    # Handle ```json\n{...}\n```
+    if text.startswith("```"):
+        lines = text.split("\n")
+        # Remove first line if it's a code fence
+        if lines[0].strip().startswith("```"):
+            lines = lines[1:]
+        # Remove last line if it's a code fence
+        if lines and lines[-1].strip() == "```":
+            lines = lines[:-1]
+        text = "\n".join(lines).strip()
+    
+    # Step 2: Remove leading/trailing backticks
+    text = text.strip("`").strip()
+    
+    # Step 3: Fix unclosed strings (common issue)
+    # Count quotes to see if we have an odd number
+    quote_count = text.count('"') - text.count('\\"')
+    if quote_count % 2 == 1:
+        # Odd number of quotes - try to close the last string
+        # Find the last quote and add a closing quote before the next structural character
+        last_quote_idx = text.rfind('"')
+        if last_quote_idx != -1:
+            # Look for the next structural character after the last quote
+            remaining = text[last_quote_idx + 1:]
+            for i, char in enumerate(remaining):
+                if char in [',', '}', ']', '\n']:
+                    text = text[:last_quote_idx + 1 + i] + '"' + text[last_quote_idx + 1 + i:]
+                    break
+    
+    # Step 4: Fix unclosed brackets/braces
+    # Count opening and closing brackets
+    open_braces = text.count('{')
+    close_braces = text.count('}')
+    open_brackets = text.count('[')
+    close_brackets = text.count(']')
+    
+    # Add missing closing braces
+    if open_braces > close_braces:
+        text += '}' * (open_braces - close_braces)
+    
+    # Add missing closing brackets
+    if open_brackets > close_brackets:
+        text += ']' * (open_brackets - close_brackets)
+    
+    # Step 5: Remove trailing commas before closing braces/brackets
+    # This is a common LLM mistake
+    import re
+    # Remove comma before }
+    text = re.sub(r',(\s*})', r'\1', text)
+    # Remove comma before ]
+    text = re.sub(r',(\s*])', r'\1', text)
+    
+    # Step 6: Fix common key formatting issues
+    # Replace single quotes with double quotes (only for keys)
+    # This is a simplified approach - a full implementation would need proper parsing
+    text = re.sub(r"'([^']+)'(\s*):", r'"\1"\2:', text)
+    
+    # Step 7: Remove comments (// and /* */)
+    # Remove single-line comments
+    text = re.sub(r'//[^\n]*\n', '\n', text)
+    # Remove multi-line comments
+    text = re.sub(r'/\*.*?\*/', '', text, flags=re.DOTALL)
+    
+    return text
     # Strategy 6: Final fallback - wrap plain text as JSON
     # This handles cases where LLM returns acknowledgment text like "好的，我明白了。"
     if original_text and len(original_text) < 500:  # Only wrap short responses
