@@ -280,12 +280,9 @@ class Orchestrator:
                 "user_id": request.user_id,
             })
             
-            # Call multimodal LLM
-            from app.services.image_fetcher import ImageFetcher
-            from app.services.llm_adapter import create_llm_adapter
+            # Call multimodal LLM with race strategy
+            from app.services.screenshot_parser import ScreenshotParserService
             from app.core.config import settings
-            
-            llm_adapter = create_llm_adapter()
             
             # Get image format configuration
             image_format = settings.llm.multimodal_image_format
@@ -294,11 +291,11 @@ class Orchestrator:
             if image_format == "url":
                 image_data = image_url
                 image_type = "url"
-                logger.info(f"Using URL format for merge_step multimodal LLM")
+                logger.info(f"Using URL format for merge_step")
             else:
                 image_data = image_base64
                 image_type = "base64"
-                logger.info(f"Using base64 format for merge_step multimodal LLM")
+                logger.info(f"Using base64 format for merge_step")
             
             # Log prompt if enabled
             if trace_logger.should_log_prompt():
@@ -314,15 +311,41 @@ class Orchestrator:
                     "image_size": f"{image_width}x{image_height}",
                 })
             
+            # Create a temporary parser instance to use race strategy
+            from app.services.image_fetcher import ImageFetcher
+            from app.services.prompt_manager import PromptManager
+            from app.services.result_normalizer import ResultNormalizer
+            
+            temp_parser = ScreenshotParserService(
+                image_fetcher=ImageFetcher(),
+                prompt_manager=PromptManager(),
+                llm_adapter=llm_adapter,
+                result_normalizer=ResultNormalizer(),
+            )
+            
+            # Define validator for merge_step results
+            def validate_merge_step_result(parsed_json: dict) -> bool:
+                """Check if result has valid conversation data."""
+                conversation = parsed_json.get("conversation", [])
+                is_valid = conversation and len(conversation) > 0
+                if is_valid:
+                    logger.info(f"Found {len(conversation)} messages")
+                return is_valid
+            
             try:
-                llm_result = await llm_adapter.call_multimodal(
+                winning_strategy, llm_result = await temp_parser._race_multimodal_calls(
                     prompt=prompt,
                     image_data=image_data,
                     image_type=image_type,
+                    mime_type="image/jpeg",
                     user_id=request.user_id,
+                    session_id=request.conversation_id,
+                    provider=settings.llm.default_provider,
+                    validator=validate_merge_step_result,
+                    task_name="merge_step",
                 )
                 
-                # Parse JSON from text response
+                # Parse JSON from winning result
                 import json
                 from app.api.v1.predict import parse_json_with_markdown
                 
@@ -330,8 +353,13 @@ class Orchestrator:
                     parsed_json = parse_json_with_markdown(llm_result.text)
                     raw_text = llm_result.text
                 except json.JSONDecodeError as e:
-                    logger.error(f"Failed to parse JSON from merge_step response: {e}")
-                    raise RuntimeError(f"Failed to parse JSON from response: {str(e)}")
+                    logger.error(f"Failed to parse JSON from merge_step: {e}")
+                    raise RuntimeError(f"Failed to parse JSON: {str(e)}")
+            except ValueError as e:
+                # This catches the "Both calls failed" error from race strategy
+                error_msg = str(e)
+                logger.error(f"Merge_step race failed: {error_msg}")
+                raise RuntimeError(f"merge_step analysis failed: {error_msg}")
             except RuntimeError as e:
                 error_msg = str(e)
                 # Enhanced error logging for JSON parsing failures

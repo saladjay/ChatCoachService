@@ -553,16 +553,19 @@ async def get_merge_step_analysis_result(
             
             logger.info(f"Using URL format (skipping download): {content_url}")
         else:
-            # Base64 format: Download and compress image
+            # Base64 format: Download image (compress based on configuration)
             from app.services.image_fetcher import ImageFetcher
             image_fetcher = ImageFetcher()
             
-            fetched_image = await image_fetcher.fetch_image(content_url, compress=True)
+            # Use configuration to determine if compression is needed
+            compress = settings.llm.multimodal_image_compress
+            fetched_image = await image_fetcher.fetch_image(content_url, compress=compress)
             image_width = fetched_image.width
             image_height = fetched_image.height
             image_base64 = fetched_image.base64_data
             
-            logger.info(f"Using base64 format: {image_width}x{image_height}")
+            compress_status = "compressed" if compress else "original"
+            logger.info(f"Using base64 format ({compress_status}): {image_width}x{image_height}")
         
         # Prepare GenerateReplyRequest for orchestrator
         from app.models.api import GenerateReplyRequest
@@ -615,7 +618,15 @@ async def get_merge_step_analysis_result(
             scenario=json.dumps(scenario_json, ensure_ascii=False),
         )
         
-        logger.info(f"merge_step analysis completed for {content_url}")
+        # Validate that dialogs were extracted
+        if not dialogs or len(dialogs) == 0:
+            logger.error(f"No dialogs extracted from image: {content_url}")
+            raise HTTPException(
+                status_code=400,
+                detail="No dialogs found in the image. Please ensure the image contains chat messages.",
+            )
+        
+        logger.info(f"merge_step analysis completed for {content_url}: {len(dialogs)} dialogs extracted")
         
         return image_result, json.dumps(scenario_json, ensure_ascii=False)
         
@@ -991,6 +1002,14 @@ async def handle_image(
             image_result.content = content_url
             logger.info(f"Image result: {type(image_result)}")
             logger.info(f"Content processed successfully: {len(image_result.dialogs)} dialogs extracted")
+            
+            # Validate that dialogs were extracted
+            if not image_result.dialogs or len(image_result.dialogs) == 0:
+                logger.error(f"No dialogs extracted from image: {content_url}")
+                raise HTTPException(
+                    status_code=400,
+                    detail="No dialogs found in the image. Please ensure the image contains chat messages.",
+                )
      
             await cache_service.append_event(
                 session_id=request.session_id,

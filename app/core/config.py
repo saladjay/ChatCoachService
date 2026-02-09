@@ -32,6 +32,11 @@ class LLMConfig(BaseSettings):
     # base64: Compress and encode image as base64 (recommended for most providers)
     # url: Send image URL directly (faster but not all providers support it)
     multimodal_image_format: Literal["base64", "url"] = "base64"
+    
+    # Whether to compress images before sending to LLM
+    # true: Compress to 800px max dimension (saves tokens, faster)
+    # false: Use original image size (better quality, more tokens)
+    multimodal_image_compress: bool = True
 
 
 class OrchestratorConfig(BaseSettings):
