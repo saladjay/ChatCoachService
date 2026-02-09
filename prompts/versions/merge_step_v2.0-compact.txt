@@ -20,7 +20,7 @@ Sender rules (very important):
 - sender must be consistent with column and overall layout
 
 S2 CONVERSATION:
-Using ONLY S1 bubbles (visual top→bottom):
+Using ONLY S1 bubbles (visual top to bottom):
 - Summarize ≤2 sentences
 - emotion_state: positive|neutral|negative
 - current_intimacy_level: 0-100 (int)
