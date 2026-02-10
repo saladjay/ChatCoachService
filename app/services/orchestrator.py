@@ -495,7 +495,23 @@ class Orchestrator:
                                 premium_parsed = parse_json_with_markdown(premium_result.text)
                                 if validate_merge_step_result(premium_parsed):
                                     logger.info(f"[{conversation_id}] Background: Premium result is valid")
-                                    premium_context, premium_scene = merge_adapter.to_results(premium_parsed)
+                                    
+                                    # Extract dialogs from screenshot_parse bubbles
+                                    screenshot_data = premium_parsed.get("screenshot_parse", {})
+                                    bubbles = screenshot_data.get("bubbles", [])
+                                    
+                                    # Convert bubbles to dialog format
+                                    dialogs = []
+                                    for bubble in bubbles:
+                                        dialogs.append({
+                                            "speaker": bubble.get("sender", "user"),
+                                            "text": bubble.get("text", ""),
+                                            "timestamp": None,
+                                        })
+                                    
+                                    # Convert to ContextResult and SceneAnalysisResult
+                                    premium_context = merge_adapter.to_context_result(premium_parsed, dialogs)
+                                    premium_scene = merge_adapter.to_scene_analysis_result(premium_parsed)
                                     
                                     # Log premium extraction details (same as multimodal)
                                     logger.info(f"[{conversation_id}] Background: Logging premium extraction details")
@@ -562,7 +578,23 @@ class Orchestrator:
                         premium_parsed = parse_json_with_markdown(premium_result_or_task.text)
                         if validate_merge_step_result(premium_parsed):
                             logger.info(f"[{request.conversation_id}] Caching premium result for future use")
-                            premium_context, premium_scene = merge_adapter.to_results(premium_parsed)
+                            
+                            # Extract dialogs from screenshot_parse bubbles
+                            screenshot_data = premium_parsed.get("screenshot_parse", {})
+                            bubbles = screenshot_data.get("bubbles", [])
+                            
+                            # Convert bubbles to dialog format
+                            dialogs = []
+                            for bubble in bubbles:
+                                dialogs.append({
+                                    "speaker": bubble.get("sender", "user"),
+                                    "text": bubble.get("text", ""),
+                                    "timestamp": None,
+                                })
+                            
+                            # Convert to ContextResult and SceneAnalysisResult
+                            premium_context = merge_adapter.to_context_result(premium_parsed, dialogs)
+                            premium_scene = merge_adapter.to_scene_analysis_result(premium_parsed)
                             
                             # Add metadata for cache logging
                             premium_context_data = premium_context.model_dump()
