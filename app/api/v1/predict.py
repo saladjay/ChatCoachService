@@ -524,6 +524,7 @@ async def predict(
                 cache_service,
             )
             duration_ms = int((time.time() - start_time) * 1000)
+            logger.info(f"result: {result.results}")
             logger.info(f"[TIMING] predict function ended (image) at {datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}, duration: {duration_ms}ms")
             return result
         
@@ -731,6 +732,7 @@ async def get_merge_step_analysis_result(
                 speaker=msg.speaker,
                 from_user=(msg.speaker == "user"),
             )
+            logger.info(f"[{__name__}:get_merge_step_analysis_result:L{735}] Dialog text: {msg.content}")
             dialogs.append(dialog_item)
         
         # Create scenario JSON
@@ -1190,6 +1192,7 @@ async def handle_image(
     if use_merge_step and items:
         # Extract results from items
         results = [item_result for _, _, item_result in items]
+        logger.info(f"[{__name__}:predict:L{1196}] Merge step results: {results}")
         
         # Handle reply generation if requested
         suggested_replies: list[str] = []
