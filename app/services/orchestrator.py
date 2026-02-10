@@ -129,6 +129,10 @@ class Orchestrator:
         self.config = config or OrchestratorConfig()
         self.billing_config = billing_config or BillingConfig()
         self.strategy_planner = strategy_planner
+        
+        # Background task management
+        self._background_tasks: list[asyncio.Task] = []
+        self._shutdown_event = asyncio.Event()
 
     def _log_merge_step_extraction(
         self,
@@ -330,8 +334,12 @@ class Orchestrator:
                 scene = SceneAnalysisResult(**cached_scene)
                 
                 # Log cached conversation details
+                # Extract model info from cache metadata if available
+                cached_model = cached_context.get("_model", "unknown")
+                cached_strategy = cached_context.get("_strategy", "unknown")
+                
                 logger.info(
-                    f"[{request.conversation_id}] merge_step [CACHED] "
+                    f"[{request.conversation_id}] merge_step [CACHED|{cached_strategy}|{cached_model}] "
                     f"Conversation: {len(context.conversation)} messages"
                 )
                 for idx, msg in enumerate(context.conversation, 1):
@@ -471,45 +479,82 @@ class Orchestrator:
                     # Extract necessary info from request before it becomes invalid
                     resource = request.resource
                     conversation_id = request.conversation_id
+                    scene = request.scene if hasattr(request, 'scene') else ""
+                    cache_service = self.cache_service  # Use instance variable instead of get_cache_service()
                     
                     async def cache_premium_when_ready():
                         try:
-                            _, premium_result = await premium_result_or_task
+                            # Add timeout protection (default: 30 seconds)
+                            timeout = getattr(settings.llm, 'premium_cache_timeout', 30.0)
+                            _, premium_result = await asyncio.wait_for(
+                                premium_result_or_task,
+                                timeout=timeout
+                            )
                             if premium_result:
+                                logger.info(f"[{conversation_id}] Background: Premium task completed, processing result")
                                 premium_parsed = parse_json_with_markdown(premium_result.text)
                                 if validate_merge_step_result(premium_parsed):
-                                    logger.info(f"[{conversation_id}] Background: Caching premium result")
+                                    logger.info(f"[{conversation_id}] Background: Premium result is valid")
                                     premium_context, premium_scene = merge_adapter.to_results(premium_parsed)
                                     
-                                    # Use cache service directly with resource key
-                                    # Don't rely on request object which may be invalid
-                                    from app.services.cache_service import get_cache_service
-                                    cache_service = get_cache_service()
-                                    
-                                    # Cache context_analysis
-                                    await cache_service.set(
-                                        category="context_analysis",
-                                        resource=resource,
-                                        data=premium_context.model_dump()
+                                    # Log premium extraction details (same as multimodal)
+                                    logger.info(f"[{conversation_id}] Background: Logging premium extraction details")
+                                    self._log_merge_step_extraction(
+                                        session_id=conversation_id,
+                                        strategy="premium",
+                                        model=premium_result.model,
+                                        parsed_json=premium_parsed
                                     )
                                     
-                                    # Cache scene_analysis
-                                    await cache_service.set(
-                                        category="scene_analysis",
-                                        resource=resource,
-                                        data=premium_scene.model_dump()
-                                    )
+                                    # Add metadata for cache logging
+                                    premium_context_data = premium_context.model_dump()
+                                    premium_context_data["_model"] = premium_result.model
+                                    premium_context_data["_strategy"] = "premium"
+                                    
+                                    premium_scene_data = premium_scene.model_dump()
+                                    premium_scene_data["_model"] = premium_result.model
+                                    premium_scene_data["_strategy"] = "premium"
+                                    
+                                    # Use cache service from closure (already captured)
+                                    if cache_service:
+                                        # Cache context_analysis
+                                        await cache_service.append_event(
+                                            session_id=conversation_id,
+                                            category="context_analysis",
+                                            resource=resource,
+                                            payload=premium_context_data,
+                                            scene=scene
+                                        )
+                                        
+                                        # Cache scene_analysis
+                                        await cache_service.append_event(
+                                            session_id=conversation_id,
+                                            category="scene_analysis",
+                                            resource=resource,
+                                            payload=premium_scene_data,
+                                            scene=scene
+                                        )
                                     
                                     logger.info(f"[{conversation_id}] Background: Premium result cached successfully")
                                 else:
                                     logger.warning(f"[{conversation_id}] Background: Premium result invalid, not caching")
+                            else:
+                                logger.warning(f"[{conversation_id}] Background: Premium result is None")
+                        except asyncio.TimeoutError:
+                            logger.warning(f"[{conversation_id}] Background: Premium task timeout after {timeout}s")
                         except asyncio.CancelledError:
                             logger.info(f"[{conversation_id}] Background: Premium caching cancelled")
                         except Exception as e:
                             logger.warning(f"[{conversation_id}] Background: Failed to cache premium result: {e}")
+                            import traceback
+                            logger.debug(f"[{conversation_id}] Background: Traceback: {traceback.format_exc()}")
                     
-                    # Start background task (fire and forget)
-                    asyncio.create_task(cache_premium_when_ready())
+                    # Start background task with tracking
+                    background_task = asyncio.create_task(cache_premium_when_ready())
+                    self._register_background_task(
+                        background_task, 
+                        f"premium_cache_{conversation_id[:8]}"
+                    )
                     
                 elif premium_result_or_task and premium_result_or_task != llm_result:
                     # Premium completed and is different from winning result
@@ -518,8 +563,18 @@ class Orchestrator:
                         if validate_merge_step_result(premium_parsed):
                             logger.info(f"[{request.conversation_id}] Caching premium result for future use")
                             premium_context, premium_scene = merge_adapter.to_results(premium_parsed)
-                            await self._cache_payload(request, "context_analysis", premium_context.model_dump())
-                            await self._cache_payload(request, "scene_analysis", premium_scene.model_dump())
+                            
+                            # Add metadata for cache logging
+                            premium_context_data = premium_context.model_dump()
+                            premium_context_data["_model"] = premium_result_or_task.model
+                            premium_context_data["_strategy"] = "premium"
+                            
+                            premium_scene_data = premium_scene.model_dump()
+                            premium_scene_data["_model"] = premium_result_or_task.model
+                            premium_scene_data["_strategy"] = "premium"
+                            
+                            await self._cache_payload(request, "context_analysis", premium_context_data)
+                            await self._cache_payload(request, "scene_analysis", premium_scene_data)
                             logger.info(f"[{request.conversation_id}] Premium result cached successfully")
                         else:
                             logger.warning(f"[{request.conversation_id}] Premium result invalid, not caching")
@@ -632,15 +687,24 @@ class Orchestrator:
             )
             
             # Cache results using traditional field names for cache sharing
+            # Add metadata for cache logging
+            context_data = context.model_dump(mode="json")
+            context_data["_model"] = llm_result.model
+            context_data["_strategy"] = winning_strategy
+            
+            scene_data = scene.model_dump(mode="json")
+            scene_data["_model"] = llm_result.model
+            scene_data["_strategy"] = winning_strategy
+            
             await self._append_cache_event(
                 request,
                 "context_analysis",  # Use traditional field name
-                context.model_dump(mode="json")
+                context_data
             )
             await self._append_cache_event(
                 request,
                 "scene_analysis",  # Use traditional field name
-                scene.model_dump(mode="json")
+                scene_data
             )
             
             logger.info("merge_step analysis completed and cached")
@@ -1502,3 +1566,63 @@ class Orchestrator:
                 )
         except Exception as exc:
             logger.warning("Cache append failed for category=%s: %s", category, exc)
+
+    def _register_background_task(self, task: asyncio.Task, task_name: str = "unknown") -> None:
+        """Register a background task for tracking and cleanup.
+        
+        Args:
+            task: The asyncio Task to register
+            task_name: Human-readable name for logging
+        """
+        self._background_tasks.append(task)
+        logger.debug(f"Registered background task: {task_name} (total: {len(self._background_tasks)})")
+        
+        # Add callback to remove completed tasks
+        def on_task_done(t: asyncio.Task):
+            try:
+                self._background_tasks.remove(t)
+                logger.debug(f"Background task completed: {task_name} (remaining: {len(self._background_tasks)})")
+            except ValueError:
+                pass  # Task already removed
+        
+        task.add_done_callback(on_task_done)
+    
+    async def shutdown(self, timeout: float = 30.0) -> None:
+        """Gracefully shutdown the orchestrator and wait for background tasks.
+        
+        Args:
+            timeout: Maximum time to wait for background tasks (seconds)
+        """
+        logger.info(f"Orchestrator shutdown initiated. Waiting for {len(self._background_tasks)} background tasks...")
+        self._shutdown_event.set()
+        
+        if not self._background_tasks:
+            logger.info("No background tasks to wait for")
+            return
+        
+        try:
+            # Wait for all background tasks with timeout
+            await asyncio.wait_for(
+                asyncio.gather(*self._background_tasks, return_exceptions=True),
+                timeout=timeout
+            )
+            logger.info("All background tasks completed successfully")
+        except asyncio.TimeoutError:
+            logger.warning(f"Background tasks did not complete within {timeout}s, cancelling...")
+            # Cancel remaining tasks
+            for task in self._background_tasks:
+                if not task.done():
+                    task.cancel()
+            # Wait a bit for cancellation to propagate
+            await asyncio.gather(*self._background_tasks, return_exceptions=True)
+            logger.info("Background tasks cancelled")
+        except Exception as e:
+            logger.error(f"Error during shutdown: {e}")
+    
+    def get_background_task_count(self) -> int:
+        """Get the number of active background tasks.
+        
+        Returns:
+            Number of active background tasks
+        """
+        return len(self._background_tasks)
