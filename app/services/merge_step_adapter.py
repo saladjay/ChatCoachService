@@ -76,8 +76,61 @@ class MergeStepAdapter:
         
         # Extract and process bubbles
         bubbles_data = screenshot_data.get("bubbles", [])
+        
+        # Check if v3.0 image_metadata is available
+        image_metadata = merge_output.get("image_metadata", {})
+        llm_reported_width = image_metadata.get("original_width", 0)
+        llm_reported_height = image_metadata.get("original_height", 0)
+        
+        # Validate LLM-reported dimensions against actual dimensions
+        if llm_reported_width > 0 and llm_reported_height > 0:
+            if abs(llm_reported_width - image_width) > 5 or abs(llm_reported_height - image_height) > 5:
+                logger.warning(
+                    f"Image dimension mismatch: LLM reported {llm_reported_width}x{llm_reported_height}, "
+                    f"actual {image_width}x{image_height}"
+                )
+            else:
+                logger.debug(f"Image dimensions confirmed by LLM: {llm_reported_width}x{llm_reported_height}")
+        
+        # First pass: detect coordinate scale by checking all bubbles
+        coordinate_scale = "pixels"  # default assumption
+        max_x = 0
+        max_y = 0
+        all_coords_small = True
+        
+        for bubble_data in bubbles_data:
+            bbox_data = bubble_data.get("bbox", {})
+            x1 = float(bbox_data.get("x1", 0))
+            y1 = float(bbox_data.get("y1", 0))
+            x2 = float(bbox_data.get("x2", 0))
+            y2 = float(bbox_data.get("y2", 0))
+            
+            max_x = max(max_x, x1, x2)
+            max_y = max(max_y, y1, y2)
+            
+            if x1 > 1.0 or y1 > 1.0 or x2 > 1.0 or y2 > 1.0:
+                all_coords_small = False
+        
+        # Determine scale
+        if all_coords_small and max_x <= 1.0 and max_y <= 1.0:
+            coordinate_scale = "normalized_0_1"
+            logger.warning(
+                f"Detected normalized coordinates (0-1 range) despite v3.0 prompt requiring pixels. "
+                f"This may indicate LLM is not following the prompt correctly."
+            )
+        elif max_x > image_width or max_y > image_height:
+            coordinate_scale = "normalized_0_1000"
+            logger.warning(
+                f"Detected coordinates exceeding image bounds "
+                f"(max_x={max_x} > {image_width} or max_y={max_y} > {image_height}). "
+                f"Assuming 0-1000 scale. This should not happen with v3.0 prompt."
+            )
+        else:
+            logger.debug(f"Coordinates appear to be in pixels (as expected with v3.0 prompt)")
+        
         bubbles = []
         
+        # Second pass: process bubbles with detected scale
         for idx, bubble_data in enumerate(bubbles_data):
             bbox_data = bubble_data.get("bbox", {})
             
@@ -86,6 +139,36 @@ class MergeStepAdapter:
             y1 = float(bbox_data.get("y1", 0))
             x2 = float(bbox_data.get("x2", 0))
             y2 = float(bbox_data.get("y2", 0))
+            
+            # Apply scale conversion
+            if coordinate_scale == "normalized_0_1":
+                x1 = x1 * image_width
+                y1 = y1 * image_height
+                x2 = x2 * image_width
+                y2 = y2 * image_height
+            elif coordinate_scale == "normalized_0_1000":
+                x1 = (x1 / 1000.0) * image_width
+                y1 = (y1 / 1000.0) * image_height
+                x2 = (x2 / 1000.0) * image_width
+                y2 = (y2 / 1000.0) * image_height
+            
+            # Validate final coordinates (v3.0 requirements)
+            if x1 >= x2 or y1 >= y2:
+                logger.error(
+                    f"Bubble {idx}: Invalid bbox coordinates (violates x2>x1, y2>y1): "
+                    f"x1={x1:.1f} >= x2={x2:.1f} or y1={y1:.1f} >= y2={y2:.1f}"
+                )
+            if x2 > image_width or y2 > image_height:
+                logger.warning(
+                    f"Bubble {idx}: Bbox exceeds image bounds after normalization: "
+                    f"bbox=[{x1:.1f},{y1:.1f},{x2:.1f},{y2:.1f}], image={image_width}x{image_height}"
+                )
+            
+            # Convert to integers as required by v3.0 prompt
+            x1 = int(round(x1))
+            y1 = int(round(y1))
+            x2 = int(round(x2))
+            y2 = int(round(y2))
             
             # Calculate center_x and center_y if missing
             center_x = bubble_data.get("center_x")
@@ -352,6 +435,10 @@ class MergeStepAdapter:
         """
         Validate that merge_step output has all required fields.
         
+        Supports both v2.0 and v3.0 prompt formats:
+        - v2.0: No image_metadata field
+        - v3.0: Includes image_metadata with original_width/height
+        
         Args:
             merge_output: The merge_step JSON output
             
@@ -360,6 +447,22 @@ class MergeStepAdapter:
         """
         try:
             logger.info(f"Starting validation of merge_output with keys: {list(merge_output.keys())}")
+            
+            # Check for v3.0 image_metadata (optional for backward compatibility)
+            if "image_metadata" in merge_output:
+                metadata = merge_output["image_metadata"]
+                logger.info(f"Detected v3.0 format with image_metadata: {metadata}")
+                
+                # Validate image_metadata structure
+                if "original_width" in metadata and "original_height" in metadata:
+                    width = metadata.get("original_width", 0)
+                    height = metadata.get("original_height", 0)
+                    if width > 0 and height > 0:
+                        logger.info(f"Image dimensions from LLM: {width}x{height}")
+                    else:
+                        logger.warning(f"Invalid image dimensions in metadata: {width}x{height}")
+            else:
+                logger.info("No image_metadata found, assuming v2.0 format")
             
             # Check top-level keys
             required_keys = ["screenshot_parse", "conversation_analysis", "scenario_decision"]
