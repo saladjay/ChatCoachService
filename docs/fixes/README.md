@@ -60,6 +60,22 @@
 
 **状态**：✅ 已完成并测试
 
+### [Premium 缓存 Resource=None 错误修复](./premium-cache-resource-none-fix.md)
+修复当 `request.resource` 为 `None` 时导致的 Redis 编码错误。
+
+**问题**：`'NoneType' object has no attribute 'encode'`
+
+**根本原因**：
+- `request.resource` 是 `Optional[str]`，默认值为 `None`
+- Redis 的 `hset` 操作不接受 `None` 值
+- 代码直接使用 `request.resource` 而没有处理 `None`
+
+**修复**：
+- 后台任务缓存：`resource = request.resource or ""`
+- 同步缓存：修复不存在的 `_cache_payload` 方法，使用正确的 `cache_service.append_event()`
+
+**状态**：✅ 已修复并测试
+
 ---
 
 ## 其他修复
@@ -86,7 +102,8 @@ docs/
 │   ├── cache-and-background-task-optimization.md
 │   ├── premium-to-results-fix.md
 │   ├── bbox-coordinate-issue.md
-│   ├── merge-step-v3-compatibility.md  # NEW
+│   ├── merge-step-v3-compatibility.md
+│   ├── premium-cache-resource-none-fix.md  # NEW
 │   └── ...
 ├── race-strategy/                  # 竞速策略相关
 │   ├── CACHE_BEHAVIOR.md          # 缓存行为分析
@@ -108,6 +125,7 @@ docs/
 - `test_background_task_management.py` - 任务管理系统测试
 - `test_premium_logging.py` - Premium 日志测试
 - `test_bbox_normalization.py` - 边界框坐标归一化测试
+- `test_premium_cache_resource_none.py` - Resource=None 处理测试
 
 ---
 
@@ -117,5 +135,6 @@ docs/
 - [Premium to_results 修复](./premium-to-results-fix.md)
 - [边界框坐标修复](./bbox-coordinate-issue.md)
 - [Merge Step v3.0 兼容性](./merge-step-v3-compatibility.md)
+- [Premium 缓存 Resource=None 修复](./premium-cache-resource-none-fix.md)
 - [竞速策略缓存行为](../race-strategy/CACHE_BEHAVIOR.md)
 - [测试脚本](../../test_cache_model_logging.py)
