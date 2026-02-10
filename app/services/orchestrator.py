@@ -177,10 +177,10 @@ class Orchestrator:
             
             # Log bubble details with layout context
             logger.info(
-                f"[{session_id}] 📊 FINAL [{strategy}|{model}] Layout: left={left_role}, right={right_role}"
+                f"[{session_id}] FINAL [{strategy}|{model}] Layout: left={left_role}, right={right_role}"
             )
             logger.info(
-                f"[{session_id}] 📊 FINAL [{strategy}|{model}] Extracted {len(sorted_bubbles)} bubbles (sorted top→bottom):"
+                f"[{session_id}] FINAL [{strategy}|{model}] Extracted {len(sorted_bubbles)} bubbles (sorted top->bottom):"
             )
             
             for idx, bubble in enumerate(sorted_bubbles, 1):
@@ -195,13 +195,13 @@ class Orchestrator:
                 
                 # Show expected role based on layout
                 expected_role = left_role if column == "left" else right_role
-                role_match = "✓" if sender == expected_role else "✗"
+                role_match = "OK" if sender == expected_role else "MISMATCH"
                 
-                # Truncate long messages for readability
+                # Truncate long messages for readability (keep emoji in content)
                 display_text = text[:100] + "..." if len(text) > 100 else text
                 
                 logger.info(
-                    f"[{session_id}] 📊   [{idx}] {sender}({column}) {role_match} "
+                    f"[{session_id}]   [{idx}] {sender}({column}) {role_match} "
                     f"bbox=[{x1},{y1},{x2},{y2}]: {display_text}"
                 )
                 
@@ -423,7 +423,7 @@ class Orchestrator:
                 return merge_adapter.validate_merge_output(parsed_json)
             
             try:
-                winning_strategy, llm_result = await temp_parser._race_multimodal_calls(
+                winning_strategy, llm_result, premium_result_or_task = await temp_parser._race_multimodal_calls(
                     prompt=prompt,
                     image_data=image_data,
                     image_type=image_type,
@@ -458,6 +458,74 @@ class Orchestrator:
                 except json.JSONDecodeError as e:
                     logger.error(f"Failed to parse JSON from merge_step: {e}")
                     raise RuntimeError(f"Failed to parse JSON: {str(e)}")
+                
+                # Handle premium result caching in background
+                # premium_result_or_task could be:
+                # 1. A result object (if premium completed)
+                # 2. A task object (if premium is still running)
+                import asyncio
+                if isinstance(premium_result_or_task, asyncio.Task):
+                    # Premium is still running, schedule background caching
+                    logger.info(f"[{request.conversation_id}] Premium task still running, will cache in background")
+                    
+                    # Extract necessary info from request before it becomes invalid
+                    resource = request.resource
+                    conversation_id = request.conversation_id
+                    
+                    async def cache_premium_when_ready():
+                        try:
+                            _, premium_result = await premium_result_or_task
+                            if premium_result:
+                                premium_parsed = parse_json_with_markdown(premium_result.text)
+                                if validate_merge_step_result(premium_parsed):
+                                    logger.info(f"[{conversation_id}] Background: Caching premium result")
+                                    premium_context, premium_scene = merge_adapter.to_results(premium_parsed)
+                                    
+                                    # Use cache service directly with resource key
+                                    # Don't rely on request object which may be invalid
+                                    from app.services.cache_service import get_cache_service
+                                    cache_service = get_cache_service()
+                                    
+                                    # Cache context_analysis
+                                    await cache_service.set(
+                                        category="context_analysis",
+                                        resource=resource,
+                                        data=premium_context.model_dump()
+                                    )
+                                    
+                                    # Cache scene_analysis
+                                    await cache_service.set(
+                                        category="scene_analysis",
+                                        resource=resource,
+                                        data=premium_scene.model_dump()
+                                    )
+                                    
+                                    logger.info(f"[{conversation_id}] Background: Premium result cached successfully")
+                                else:
+                                    logger.warning(f"[{conversation_id}] Background: Premium result invalid, not caching")
+                        except asyncio.CancelledError:
+                            logger.info(f"[{conversation_id}] Background: Premium caching cancelled")
+                        except Exception as e:
+                            logger.warning(f"[{conversation_id}] Background: Failed to cache premium result: {e}")
+                    
+                    # Start background task (fire and forget)
+                    asyncio.create_task(cache_premium_when_ready())
+                    
+                elif premium_result_or_task and premium_result_or_task != llm_result:
+                    # Premium completed and is different from winning result
+                    try:
+                        premium_parsed = parse_json_with_markdown(premium_result_or_task.text)
+                        if validate_merge_step_result(premium_parsed):
+                            logger.info(f"[{request.conversation_id}] Caching premium result for future use")
+                            premium_context, premium_scene = merge_adapter.to_results(premium_parsed)
+                            await self._cache_payload(request, "context_analysis", premium_context.model_dump())
+                            await self._cache_payload(request, "scene_analysis", premium_scene.model_dump())
+                            logger.info(f"[{request.conversation_id}] Premium result cached successfully")
+                        else:
+                            logger.warning(f"[{request.conversation_id}] Premium result invalid, not caching")
+                    except Exception as e:
+                        logger.warning(f"[{request.conversation_id}] Failed to cache premium result: {e}")
+                
             except ValueError as e:
                 # This catches the "Both calls failed" error from race strategy
                 error_msg = str(e)
