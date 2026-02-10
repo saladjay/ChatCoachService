@@ -190,6 +190,7 @@ class Orchestrator:
             for idx, bubble in enumerate(sorted_bubbles, 1):
                 sender = bubble.get("sender", "unknown")
                 text = bubble.get("text", "")
+                logger.info(f"[{__name__}:_log_merge_step_extraction:L{195}] Original bubble text before truncation: {text}")
                 column = bubble.get("column", "unknown")
                 bbox = bubble.get("bbox", {})
                 x1 = bbox.get("x1", 0)
@@ -323,13 +324,17 @@ class Orchestrator:
         
         try:
             # Check cache first using traditional field names for cache sharing
-            logger.info(f"[{request.conversation_id}] merge_step_analysis: force_regenerate={request.force_regenerate}, resource={request.resource}")
+            logger.info(f"[{request.conversation_id}] merge_step_analysis: force_regenerate={request.force_regenerate}, resource={request.resource}, scene={request.scene}")
+            
+            if request.force_regenerate:
+                logger.info(f"[{request.conversation_id}] Skipping cache due to force_regenerate=True")
             
             cached_context = await self._get_cached_payload(request, "context_analysis")
             cached_scene = await self._get_cached_payload(request, "scene_analysis")
             
             if cached_context and cached_scene:
-                logger.info("Using cached merge_step results (from traditional cache)")
+                logger.info(f"[{request.conversation_id}] Using cached merge_step results: session_id={request.conversation_id}, resource={request.resource}, scene={request.scene}")
+                logger.info(f"[{request.conversation_id}] Cached strategy={cached_context.get('_strategy')}, model={cached_context.get('_model')}")
                 context = ContextResult(**cached_context)
                 scene = SceneAnalysisResult(**cached_scene)
                 
@@ -451,6 +456,15 @@ class Orchestrator:
                     parsed_json = parse_json_with_markdown(llm_result.text)
                     raw_text = llm_result.text
                     
+                    logger.info(f"[{__name__}:analyze_with_merge_step:L{453}] LLM raw response length: {len(llm_result.text)}")
+                    logger.info(f"[{__name__}:analyze_with_merge_step:L{454}] LLM parsed_json bubbles count: {len(parsed_json.get('screenshot_parse', {}).get('bubbles', []))}")
+                    
+                    # Log first bubble text to verify LLM output
+                    bubbles_check = parsed_json.get('screenshot_parse', {}).get('bubbles', [])
+                    if bubbles_check:
+                        first_bubble_text = bubbles_check[0].get('text', '')
+                        logger.info(f"[{__name__}:analyze_with_merge_step:L{458}] First bubble text from LLM (length={len(first_bubble_text)}): {first_bubble_text[:200]}...")
+                    
                     logger.info(f"About to call _log_merge_step_extraction for session {request.conversation_id}")
                     
                     # Log extracted conversation details
@@ -534,6 +548,7 @@ class Orchestrator:
                                     # Use cache service from closure (already captured)
                                     if cache_service:
                                         # Cache context_analysis
+                                        logger.info(f"[{conversation_id}] Background: Caching premium context_analysis: session_id={conversation_id}, resource={resource}, scene={scene}")
                                         await cache_service.append_event(
                                             session_id=conversation_id,
                                             category="context_analysis",
@@ -543,6 +558,7 @@ class Orchestrator:
                                         )
                                         
                                         # Cache scene_analysis
+                                        logger.info(f"[{conversation_id}] Background: Caching premium scene_analysis: session_id={conversation_id}, resource={resource}, scene={scene}")
                                         await cache_service.append_event(
                                             session_id=conversation_id,
                                             category="scene_analysis",
@@ -567,6 +583,7 @@ class Orchestrator:
                     
                     # Start background task with tracking
                     background_task = asyncio.create_task(cache_premium_when_ready())
+                    logger.info(f"[{request.conversation_id}] Started background task for premium caching: task_id={id(background_task)}")
                     self._register_background_task(
                         background_task, 
                         f"premium_cache_{conversation_id[:8]}"
@@ -703,13 +720,14 @@ class Orchestrator:
             # Extract dialogs from screenshot_parse bubbles
             screenshot_data = parsed_json.get("screenshot_parse", {})
             bubbles = screenshot_data.get("bubbles", [])
-            
             # Convert bubbles to dialog format
             dialogs = []
             for bubble in bubbles:
+                text = bubble.get("text", "")
+                logger.info(f"[{__name__}:analyze_with_merge_step:L{713}] Bubble text: {text}")
                 dialogs.append({
                     "speaker": bubble.get("sender", "user"),
-                    "text": bubble.get("text", ""),
+                    "text": text,
                     "timestamp": None,
                 })
             
@@ -753,11 +771,13 @@ class Orchestrator:
                 "context_analysis",  # Use traditional field name
                 context_data
             )
+            logger.info(f"[{request.conversation_id}] Cached {winning_strategy} context_analysis: session_id={request.conversation_id}, resource={request.resource}, scene={request.scene}")
             await self._append_cache_event(
                 request,
                 "scene_analysis",  # Use traditional field name
                 scene_data
             )
+            logger.info(f"[{request.conversation_id}] Cached {winning_strategy} scene_analysis: session_id={request.conversation_id}, resource={request.resource}, scene={request.scene}")
             
             logger.info("merge_step analysis completed and cached")
             
@@ -1600,6 +1620,7 @@ class Orchestrator:
 
     async def _append_cache_event(self, request: GenerateReplyRequest, category: str, payload: dict) -> None:
         if self.cache_service is None or (not request.resource and not request.resources):
+            logger.info(f"[{request.conversation_id}] Skipping cache: cache_service={self.cache_service is not None}, resource={request.resource}, resources={request.resources}")
             return
         try:
             resources = []
@@ -1607,6 +1628,8 @@ class Orchestrator:
                 resources.extend(request.resources)
             if request.resource:
                 resources.append(request.resource)
+            
+            logger.info(f"[{request.conversation_id}] Caching to resources: {resources}")
 
             for r in set(resources):
                 await self.cache_service.append_event(
