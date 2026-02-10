@@ -25,6 +25,41 @@
 
 **状态**：✅ 已修复
 
+### [边界框坐标缩小问题修复](./bbox-coordinate-issue.md)
+修复 LLM 返回的边界框坐标尺度不一致导致标注图片中矩形框缩小的问题。
+
+**问题**：标注图片中的矩形框比实际对话气泡小，坐标超出图片边界
+
+**根本原因**：LLM 返回的坐标可能是归一化的（0-1000 范围），但代码将其视为像素坐标
+
+**修复**：在 `MergeStepAdapter` 中添加自动坐标尺度检测和归一化
+- 支持像素坐标、0-1 归一化、0-1000 归一化三种格式
+- 两遍处理：先检测尺度，再统一归一化
+- 添加验证和警告日志
+
+**状态**：✅ 已修复并测试
+
+### [Merge Step v3.0 Prompt 兼容性](./merge-step-v3-compatibility.md)
+确保代码完全兼容新的 merge_step v3.0 prompt，同时保持向后兼容性。
+
+**v3.0 新特性**：
+- 新增 `image_metadata` 字段（包含原始图片尺寸）
+- 强化坐标要求（必须是像素值，不能是归一化尺度）
+- 坐标验证规则（整数，x2>x1, y2>y1）
+
+**代码更新**：
+- 验证逻辑支持 v3.0 的 image_metadata
+- 利用 LLM 报告的尺寸验证坐标
+- 改进警告信息（区分 v2.0 和 v3.0 行为）
+- 坐标整数化
+
+**兼容性**：
+- ✅ v2.0 prompt - 完全兼容
+- ✅ v3.0 prompt - 完全兼容
+- ✅ 自动检测和适配
+
+**状态**：✅ 已完成并测试
+
 ---
 
 ## 其他修复
@@ -50,6 +85,8 @@ docs/
 │   ├── README.md                   # 本文件
 │   ├── cache-and-background-task-optimization.md
 │   ├── premium-to-results-fix.md
+│   ├── bbox-coordinate-issue.md
+│   ├── merge-step-v3-compatibility.md  # NEW
 │   └── ...
 ├── race-strategy/                  # 竞速策略相关
 │   ├── CACHE_BEHAVIOR.md          # 缓存行为分析
@@ -70,6 +107,7 @@ docs/
 - `test_premium_background_task.py` - 后台任务行为测试
 - `test_background_task_management.py` - 任务管理系统测试
 - `test_premium_logging.py` - Premium 日志测试
+- `test_bbox_normalization.py` - 边界框坐标归一化测试
 
 ---
 
@@ -77,5 +115,7 @@ docs/
 
 - [缓存和后台任务优化](./cache-and-background-task-optimization.md)
 - [Premium to_results 修复](./premium-to-results-fix.md)
+- [边界框坐标修复](./bbox-coordinate-issue.md)
+- [Merge Step v3.0 兼容性](./merge-step-v3-compatibility.md)
 - [竞速策略缓存行为](../race-strategy/CACHE_BEHAVIOR.md)
 - [测试脚本](../../test_cache_model_logging.py)
