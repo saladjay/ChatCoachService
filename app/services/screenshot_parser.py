@@ -113,10 +113,10 @@ class ScreenshotParserService:
             
             # Log bubble details with layout context
             logger.info(
-                f"[{session_id}] 🏁 RACE [{strategy}|{model}] Layout: left={left_role}, right={right_role}"
+                f"[{session_id}] RACE [{strategy}|{model}] Layout: left={left_role}, right={right_role}"
             )
             logger.info(
-                f"[{session_id}] 🏁 RACE [{strategy}|{model}] Extracted {len(sorted_bubbles)} bubbles (sorted top→bottom):"
+                f"[{session_id}] RACE [{strategy}|{model}] Extracted {len(sorted_bubbles)} bubbles (sorted top->bottom):"
             )
             
             for idx, bubble in enumerate(sorted_bubbles, 1):
@@ -131,13 +131,13 @@ class ScreenshotParserService:
                 
                 # Show expected role based on layout
                 expected_role = left_role if column == "left" else right_role
-                role_match = "✓" if sender == expected_role else "✗"
+                role_match = "OK" if sender == expected_role else "MISMATCH"
                 
-                # Truncate long messages for readability
+                # Truncate long messages for readability (keep emoji in content)
                 display_text = text[:100] + "..." if len(text) > 100 else text
                 
                 logger.info(
-                    f"[{session_id}] 🏁   [{idx}] {sender}({column}) {role_match} "
+                    f"[{session_id}]   [{idx}] {sender}({column}) {role_match} "
                     f"bbox=[{x1},{y1},{x2},{y2}]: {display_text}"
                 )
                 
@@ -203,15 +203,19 @@ class ScreenshotParserService:
         provider: str,
         validator: callable,
         task_name: str = "multimodal_race",
-    ) -> tuple[str, Any]:
+    ) -> tuple[str, Any, Any]:
         """
-        Race two multimodal LLM calls and return the first valid result.
+        Race two multimodal LLM calls with premium priority.
+        
+        Strategy:
+        1. Always wait for both models to complete
+        2. Prefer premium result if available (higher quality)
+        3. Fall back to multimodal if premium fails
+        4. Return both results for caching purposes
         
         This method simultaneously calls:
         1. Default multimodal model (fast, lower quality)
         2. Premium model (slower, higher quality)
-        
-        And returns whichever completes first with valid data.
         
         Args:
             prompt: Text prompt for LLM
@@ -225,7 +229,10 @@ class ScreenshotParserService:
             task_name: Name for logging (e.g., "screenshot_parse")
             
         Returns:
-            Tuple of (winning_strategy, llm_result)
+            Tuple of (winning_strategy, winning_result, premium_result_or_none)
+            - winning_strategy: "premium" or "multimodal"
+            - winning_result: The result to use for current response
+            - premium_result_or_none: Premium result for caching (None if failed)
             
         Raises:
             ValueError: If both calls fail or return invalid data
@@ -288,7 +295,7 @@ class ScreenshotParserService:
                     "error": str(e),
                 })
                 logger.warning(f"[{session_id}] {task_name} multimodal failed: {e}")
-                raise
+                return ("multimodal", None)
         
         # Define async function for premium call
         async def call_premium_llm():
@@ -348,124 +355,131 @@ class ScreenshotParserService:
                     "error": str(e),
                 })
                 logger.warning(f"[{session_id}] {task_name} premium failed: {e}")
-                raise
+                return ("premium", None)
         
         # Start both tasks simultaneously
-        logger.info(f"[{session_id}] Starting {task_name} race: multimodal vs premium")
+        logger.info(f"[{session_id}] Starting {task_name} race: multimodal vs premium (fast response, premium cache)")
         multimodal_task = asyncio.create_task(call_multimodal_llm())
         premium_task = asyncio.create_task(call_premium_llm())
         
-        llm_result = None
-        winning_strategy = None
-        all_results = []  # Store all completed results
-        
         # Get debug settings
         from app.core.config import settings
-        wait_for_all = settings.debug_config.race_wait_all
         log_race = settings.debug_config.log_race_strategy
         
-        try:
-            pending = {multimodal_task, premium_task}
+        import json
+        from app.api.v1.predict import parse_json_with_markdown
+        
+        # Wait for first valid result for immediate response
+        pending = {multimodal_task, premium_task}
+        multimodal_result = None
+        premium_result = None
+        multimodal_valid = False
+        premium_valid = False
+        winning_result = None
+        winning_strategy = None
+        
+        # Phase 1: Wait for first valid result (fast response)
+        while pending and winning_result is None:
+            done, pending = await asyncio.wait(
+                pending,
+                return_when=asyncio.FIRST_COMPLETED
+            )
             
-            # Wait for all tasks or just first valid one based on debug setting
-            while pending:
-                # If we already have a winner and not in debug mode, cancel remaining
-                if llm_result is not None and not wait_for_all:
-                    if log_race:
-                        logger.info(f"[{session_id}] {task_name}: Winner found, cancelling remaining tasks")
-                    break
+            for task in done:
+                strategy, result = await task
                 
-                done, pending = await asyncio.wait(
-                    pending,
-                    return_when=asyncio.FIRST_COMPLETED
-                )
-                
-                for task in done:
-                    try:
-                        strategy, result = await task
-                        
-                        import json
-                        from app.api.v1.predict import parse_json_with_markdown
-                        
+                if strategy == "multimodal":
+                    multimodal_result = result
+                    if result:
                         try:
-                            parsed_json = parse_json_with_markdown(result.text)
+                            multimodal_parsed = parse_json_with_markdown(result.text)
+                            multimodal_valid = validator(multimodal_parsed)
                             
-                            # Log the response for debugging
                             if log_race:
                                 logger.info(
-                                    f"[{session_id}] {task_name}: {strategy} returned JSON with keys: "
-                                    f"{list(parsed_json.keys()) if isinstance(parsed_json, dict) else type(parsed_json)}"
+                                    f"[{session_id}] {task_name}: multimodal returned JSON with keys: "
+                                    f"{list(multimodal_parsed.keys()) if isinstance(multimodal_parsed, dict) else type(multimodal_parsed)}"
                                 )
                             
                             # Log extracted data based on debug settings
                             if task_name == "merge_step" and settings.debug_config.log_merge_step_extraction:
                                 self._log_merge_step_conversation(
                                     session_id=session_id,
-                                    strategy=strategy,
+                                    strategy="multimodal",
                                     model=result.model,
-                                    parsed_json=parsed_json
+                                    parsed_json=multimodal_parsed
                                 )
                             elif task_name == "screenshot_parse" and settings.debug_config.log_screenshot_parse:
                                 self._log_screenshot_dialogs(
                                     session_id=session_id,
-                                    strategy=strategy,
+                                    strategy="multimodal",
                                     model=result.model,
-                                    parsed_json=parsed_json
+                                    parsed_json=multimodal_parsed
                                 )
                             
-                            # Check if valid and store
-                            is_valid = validator(parsed_json)
-                            all_results.append((strategy, result, is_valid))
-                            
-                            # If this is the first valid result, mark it as winner
-                            if is_valid and llm_result is None:
-                                llm_result = result
-                                winning_strategy = strategy
-                                if log_race:
-                                    logger.info(f"[{session_id}] {task_name}: {strategy} won (first valid)")
-                            elif is_valid:
-                                if log_race:
-                                    logger.info(f"[{session_id}] {task_name}: {strategy} also valid (but came second)")
+                            if multimodal_valid:
+                                logger.info(f"[{session_id}] {task_name}: multimodal result is valid")
+                                # Set as winner and return immediately
+                                winning_result = result
+                                winning_strategy = "multimodal"
+                                # Break out of loop to return immediately
                             else:
-                                if log_race:
-                                    logger.warning(f"[{session_id}] {task_name}: {strategy} invalid")
+                                logger.warning(f"[{session_id}] {task_name}: multimodal result is invalid")
                         except (json.JSONDecodeError, KeyError) as e:
-                            logger.warning(
-                                f"[{session_id}] {task_name}: {strategy} bad JSON: {e}"
-                            )
-                    except Exception as e:
-                        logger.warning(f"[{session_id}] {task_name}: Task failed: {e}")
-            
-            # Cancel remaining tasks if not waiting for all
-            if not wait_for_all:
-                for task in pending:
-                    task.cancel()
-                    try:
-                        await task
-                    except asyncio.CancelledError:
-                        pass
-            
-            if llm_result is None:
-                raise ValueError(f"Both calls failed for {task_name}")
-            
-            if log_race:
-                logger.info(
-                    f"[{session_id}] {task_name} race done: {winning_strategy} won, "
-                    f"model={llm_result.model}, total_results={len(all_results)}, "
-                    f"wait_all={wait_for_all}"
-                )
-            
-            return winning_strategy, llm_result
-            
-        except Exception as e:
-            for task in [multimodal_task, premium_task]:
-                if not task.done():
-                    task.cancel()
-                    try:
-                        await task
-                    except asyncio.CancelledError:
-                        pass
-            raise
+                            logger.warning(f"[{session_id}] {task_name}: multimodal bad JSON: {e}")
+                
+                elif strategy == "premium":
+                    premium_result = result
+                    if result:
+                        try:
+                            premium_parsed = parse_json_with_markdown(result.text)
+                            premium_valid = validator(premium_parsed)
+                            
+                            if log_race:
+                                logger.info(
+                                    f"[{session_id}] {task_name}: premium returned JSON with keys: "
+                                    f"{list(premium_parsed.keys()) if isinstance(premium_parsed, dict) else type(premium_parsed)}"
+                                )
+                            
+                            # Log extracted data based on debug settings
+                            if task_name == "merge_step" and settings.debug_config.log_merge_step_extraction:
+                                self._log_merge_step_conversation(
+                                    session_id=session_id,
+                                    strategy="premium",
+                                    model=result.model,
+                                    parsed_json=premium_parsed
+                                )
+                            elif task_name == "screenshot_parse" and settings.debug_config.log_screenshot_parse:
+                                self._log_screenshot_dialogs(
+                                    session_id=session_id,
+                                    strategy="premium",
+                                    model=result.model,
+                                    parsed_json=premium_parsed
+                                )
+                            
+                            if premium_valid:
+                                logger.info(f"[{session_id}] {task_name}: premium result is valid")
+                                # Premium is valid, use it
+                                winning_result = result
+                                winning_strategy = "premium"
+                                # Break out of loop to return immediately
+                            else:
+                                logger.warning(f"[{session_id}] {task_name}: premium result is invalid")
+                        except (json.JSONDecodeError, KeyError) as e:
+                            logger.warning(f"[{session_id}] {task_name}: premium bad JSON: {e}")
+        
+        # Check if we have a winner
+        if winning_result is None:
+            # Both completed but neither is valid
+            logger.error(f"[{session_id}] {task_name}: Both multimodal and premium failed or returned invalid results")
+            raise ValueError(f"Both calls failed or returned invalid data for {task_name}")
+        
+        # We have a winner! Return immediately for fast response
+        logger.info(f"[{session_id}] {task_name}: Using {winning_strategy} result for immediate response")
+        
+        # Return the winning result along with premium task/result for background caching
+        # If premium hasn't completed yet, return the task; otherwise return the result
+        return (winning_strategy, winning_result, premium_task if premium_result is None else premium_result)
 
     async def parse_screenshot(
         self,
