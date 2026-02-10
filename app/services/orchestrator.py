@@ -284,7 +284,7 @@ class Orchestrator:
         image_base64: str,
         image_width: int,
         image_height: int,
-    ) -> tuple[ContextResult, SceneAnalysisResult]:
+    ) -> tuple[ContextResult, SceneAnalysisResult, dict]:
         """
         Perform merged analysis using merge_step prompt.
         
@@ -301,7 +301,8 @@ class Orchestrator:
             image_height: Image height in pixels
             
         Returns:
-            Tuple of (ContextResult, SceneAnalysisResult)
+            Tuple of (ContextResult, SceneAnalysisResult, parsed_json)
+            The parsed_json contains the raw merge_step output including bbox coordinates
             
         Raises:
             QuotaExceededError: If user quota is exceeded
@@ -348,7 +349,7 @@ class Orchestrator:
                         f"[{request.conversation_id}]   [{idx}] {msg.speaker}: {display_content}"
                     )
                 
-                return context, scene
+                return context, scene, cached_context  # Return cached parsed_json
             
             # No cache, perform merge_step analysis
             logger.info("Performing merge_step analysis with LLM")
@@ -761,7 +762,7 @@ class Orchestrator:
             
             logger.info("merge_step analysis completed and cached")
             
-            return context, scene
+            return context, scene, parsed_json  # Return raw parsed_json for bbox extraction
             
         except Exception as e:
             logger.exception(f"merge_step analysis error: {e}")
@@ -1354,6 +1355,7 @@ class Orchestrator:
                     scene=scene,
                     persona=persona,
                     language=request.language,  # 传递语言参数
+                    reply_sentence=getattr(request, "reply_sentence", ""),  # 新增：传递 reply_sentence
                 )
                 reply_result = await self._execute_step(
                     exec_ctx,

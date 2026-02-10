@@ -12,6 +12,7 @@ import logging
 import time
 import json
 import os
+import asyncio
 from datetime import datetime
 from pathlib import Path
 from fastapi import APIRouter, HTTPException
@@ -524,6 +525,25 @@ async def predict(
                 cache_service,
             )
             duration_ms = int((time.time() - start_time) * 1000)
+            
+            # Log result summary (always)
+            for idx, img_result in enumerate(result.results):
+                dialog_count = len(img_result.dialogs) if img_result.dialogs else 0
+                scenario_preview = img_result.scenario[:100] if img_result.scenario else "None"
+                logger.info(f"result[{idx}]: {dialog_count} dialogs, scenario: {scenario_preview}...")
+            
+            # Log full content if debug flag is enabled
+            if settings.debug_config.log_full_result_content:
+                for idx, img_result in enumerate(result.results):
+                    logger.debug(f"result[{idx}] full content:")
+                    logger.debug(f"  content URL: {img_result.content}")
+                    logger.debug(f"  scenario: {img_result.scenario}")
+                    logger.debug(f"  dialogs ({len(img_result.dialogs) if img_result.dialogs else 0}):")
+                    if img_result.dialogs:
+                        for dialog_idx, dialog in enumerate(img_result.dialogs):
+                            text_preview = dialog.text[:200] if len(dialog.text) > 200 else dialog.text
+                            logger.debug(f"    [{dialog_idx}] {dialog.speaker}: {text_preview}{'...' if len(dialog.text) > 200 else ''}")
+            
             logger.info(f"[TIMING] predict function ended (image) at {datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}, duration: {duration_ms}ms")
             return result
         
@@ -676,10 +696,38 @@ async def get_merge_step_analysis_result(
         
         # Prepare image data based on format
         if image_format == "url":
-            # URL format: Skip download completely, use placeholder dimensions
+            # URL format: Try to get cached dimensions, otherwise use placeholders
             # LLM will download the image directly from URL
-            image_width = 1080  # Placeholder - actual dimensions not critical for URL mode
-            image_height = 1920  # Placeholder - typical mobile screenshot ratio
+            from app.services.image_dimension_fetcher import get_dimension_fetcher
+            
+            dimension_fetcher = get_dimension_fetcher()
+            cached_dimensions = await dimension_fetcher.get_cached_dimensions(
+                url=content_url,
+                cache_service=cache_service,
+                session_id=request.session_id,
+                scene=request.scene,
+            )
+            
+            if cached_dimensions:
+                image_width, image_height = cached_dimensions
+                logger.info(f"Using cached dimensions: {image_width}x{image_height}")
+            else:
+                # Use placeholders and start background task to fetch real dimensions
+                image_width = 1080  # Placeholder - typical mobile screenshot width
+                image_height = 1920  # Placeholder - typical mobile screenshot ratio
+                logger.info(f"Using placeholder dimensions: {image_width}x{image_height}")
+                
+                # Start background task to fetch and cache real dimensions
+                asyncio.create_task(
+                    dimension_fetcher.fetch_and_cache(
+                        url=content_url,
+                        cache_service=cache_service,
+                        session_id=request.session_id,
+                        scene=request.scene,
+                    )
+                )
+                logger.info(f"Started background task to fetch dimensions for {content_url}")
+            
             image_base64 = None  # Not needed for URL format
             
             logger.info(f"Using URL format (skipping download): {content_url}")
@@ -714,7 +762,7 @@ async def get_merge_step_analysis_result(
         )
         
         # Call merge_step_analysis
-        context, scene = await orchestrator.merge_step_analysis(
+        context, scene, parsed_json = await orchestrator.merge_step_analysis(
             request=orchestrator_request,
             image_url=content_url,
             image_base64=image_base64,
@@ -722,11 +770,41 @@ async def get_merge_step_analysis_result(
             image_height=image_height,
         )
         
-        # Convert context.conversation to dialogs
+        # Extract bubbles with bbox information from parsed_json
+        screenshot_data = parsed_json.get("screenshot_parse", {})
+        bubbles = screenshot_data.get("bubbles", [])
+        
+        # Convert context.conversation to dialogs with bbox information
         dialogs = []
-        for msg in context.conversation:
+        for idx, msg in enumerate(context.conversation):
+            # Try to find matching bubble for this message
+            bbox = [0.0, 0.0, 0.0, 0.0]  # Default if not found
+            
+            if idx < len(bubbles):
+                bubble = bubbles[idx]
+                bbox_data = bubble.get("bbox", {})
+                
+                # Extract bbox coordinates and normalize to 0-1 range
+                x1 = float(bbox_data.get("x1", 0))
+                y1 = float(bbox_data.get("y1", 0))
+                x2 = float(bbox_data.get("x2", 0))
+                y2 = float(bbox_data.get("y2", 0))
+                
+                # Normalize coordinates if they are in pixel format
+                # (merge_step v3.0 returns pixel coordinates)
+                if x1 > 1.0 or y1 > 1.0 or x2 > 1.0 or y2 > 1.0:
+                    # Coordinates are in pixels, normalize to 0-1
+                    x1_norm = x1 / image_width if image_width > 0 else 0.0
+                    y1_norm = y1 / image_height if image_height > 0 else 0.0
+                    x2_norm = x2 / image_width if image_width > 0 else 0.0
+                    y2_norm = y2 / image_height if image_height > 0 else 0.0
+                    bbox = [x1_norm, y1_norm, x2_norm, y2_norm]
+                else:
+                    # Already normalized
+                    bbox = [x1, y1, x2, y2]
+            
             dialog_item = DialogItem(
-                position=[0.0, 0.0, 0.0, 0.0],  # Position not available from merge_step
+                position=bbox,
                 text=msg.content,
                 speaker=msg.speaker,
                 from_user=(msg.speaker == "user"),
@@ -905,13 +983,49 @@ async def _merged_scenario_analysis(
         raise HTTPException(status_code=500, detail=f"Merged scenario analysis failed: {e}")
 
 
+def _find_last_talker_message(dialogs: list[DialogItem]) -> str:
+    """
+    从 dialogs 中找到 talker 或 left 的最后一句话。
+    
+    Args:
+        dialogs: DialogItem 列表
+    
+    Returns:
+        talker/left 的最后一句话
+        
+    Raises:
+        HTTPException: 如果没有找到 talker/left 消息
+    """
+    for dialog_item in reversed(dialogs):
+        speaker = dialog_item.speaker.lower().strip()
+        text = dialog_item.text.strip()
+        
+        # 检查是否为 talker 或 left
+        if speaker in ("talker", "left") and text:
+            logger.info(f"Found talker/left message: {text[:50]}...")
+            return text
+    
+    # 没找到 talker/left 消息，抛出异常
+    logger.error("No talker/left message found in dialogs")
+    raise HTTPException(
+        status_code=400,
+        detail="No talker message found in the image. The image must contain at least one message from the chat partner."
+    )
+
+
 async def _generate_reply(
     request: PredictRequest,
     orchestrator: OrchestratorDep,
-    analysis_queue:List[ImageAnalysisQueueInput]
+    analysis_queue: List[ImageAnalysisQueueInput],
+    last_content_type: Literal["image", "text"],  # 新增
+    last_content_value: str,  # 新增
 ) -> List[str]:
     try:
+        logger.info("="*60)
         logger.info("Reply generation requested, calling Orchestrator")
+        logger.info(f"Last content type: {last_content_type}")
+        logger.info(f"Last content value: {last_content_value[:100]}...")
+        logger.info("="*60)
         suggested_replies: list[str] = []
         
         for resource_index, (resources, dialog, list_image_result) in enumerate(analysis_queue):
@@ -922,6 +1036,45 @@ async def _generate_reply(
                     "speaker": dialog_item.speaker,
                     "text": dialog_item.text,
                 })
+            
+            # 新增：根据最后一个 content 的类型选择 reply_sentence
+            reply_sentence = ""
+            if resource_index == len(analysis_queue) - 1:  # 只在最后一个组处理
+                logger.info("-"*60)
+                logger.info("Selecting reply_sentence (Last Message):")
+                logger.info(f"  - Last content type: {last_content_type}")
+                
+                if last_content_type == "text":
+                    # 文字：直接使用文字内容
+                    reply_sentence = last_content_value
+                    logger.info(f"  - Strategy: Using text content directly")
+                    logger.info(f"  - Reply sentence: '{reply_sentence}'")
+                else:  # image
+                    # 图片：找最后一个图片的 talker/left 消息
+                    logger.info(f"  - Strategy: Finding talker/left message from image")
+                    
+                    # 从 list_image_result 中找最后一个图片类型的 result
+                    last_image_result = None
+                    for result in reversed(list_image_result):
+                        # 检查 result.content 是否为 URL（图片）
+                        if _is_url(result.content):
+                            last_image_result = result
+                            logger.info(f"  - Found last image: {result.content}")
+                            break
+                    
+                    if last_image_result:
+                        # 使用最后一个图片的 dialogs
+                        logger.info(f"  - Searching in {len(last_image_result.dialogs)} dialogs from last image")
+                        reply_sentence = _find_last_talker_message(last_image_result.dialogs)
+                        logger.info(f"  - Reply sentence: '{reply_sentence}'")
+                    else:
+                        # 没有找到图片类型的 result，使用所有 dialogs（后备方案）
+                        logger.info(f"  - No image result found, using all dialogs (fallback)")
+                        logger.info(f"  - Searching in {len(dialog)} dialogs")
+                        reply_sentence = _find_last_talker_message(dialog)
+                        logger.info(f"  - Reply sentence: '{reply_sentence}'")
+                
+                logger.info("-"*60)
             
             # Requirement 9.3: Call Orchestrator with user_id, conversation, language
             if orchestrator is not None:
@@ -935,9 +1088,15 @@ async def _generate_reply(
                     dialogs=conversation,
                     language=request.language,
                     quality="normal",
-                    persona=request.other_properties.lower(),
+                    persona=request.other_properties.lower() if request.other_properties else "",
                     scene=request.scene,
+                    reply_sentence=reply_sentence,  # 新增
                 )
+                
+                # 打印传递给 orchestrator 的 reply_sentence
+                if reply_sentence:
+                    logger.info(f"Passing reply_sentence to orchestrator: '{reply_sentence}'")
+                
                 if resource_index < len(analysis_queue) - 1:
                     await orchestrator.prepare_generate_reply(orchestrator_request)
                     continue
@@ -1226,11 +1385,17 @@ async def handle_image(
                     deepcopy(current_ImageResultList),
                 ))
             
+            # 新增：获取最后一个 content 的类型和值
+            last_content_type = items[-1][0] if items else "text"
+            last_content_value = items[-1][1] if items else ""
+            
             reply_start = time.time()
             suggested_replies = await _generate_reply(
                 request,
                 orchestrator,
                 analysis_queue,
+                last_content_type,  # 新增
+                last_content_value,  # 新增
             )
             reply_duration_ms = int((time.time() - reply_start) * 1000)
             
@@ -1333,11 +1498,17 @@ async def handle_image(
     suggested_replies: list[str] = []
     # Step 4: Generate replies if requested
     if request.reply and items:
+        # 新增：获取最后一个 content 的类型和值
+        last_content_type = items[-1][0] if items else "text"
+        last_content_value = items[-1][1] if items else ""
+        
         reply_start = time.time()
         suggested_replies = await _generate_reply(
             request,
             orchestrator,
             analysis_queue,
+            last_content_type,  # 新增
+            last_content_value,  # 新增
         )
         reply_duration_ms = int((time.time() - reply_start) * 1000)
         
