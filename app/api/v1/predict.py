@@ -785,11 +785,17 @@ async def get_merge_step_analysis_result(
                 bubble = bubbles[idx]
                 bbox_data = bubble.get("bbox", {})
                 
-                # Extract bbox coordinates and normalize to 0-1 range
-                x1 = float(bbox_data.get("x1", 0))
-                y1 = float(bbox_data.get("y1", 0))
-                x2 = float(bbox_data.get("x2", 0))
-                y2 = float(bbox_data.get("y2", 0))
+                # Extract bbox coordinates and ensure correct min/max order
+                x1_raw = float(bbox_data.get("x1", 0))
+                y1_raw = float(bbox_data.get("y1", 0))
+                x2_raw = float(bbox_data.get("x2", 0))
+                y2_raw = float(bbox_data.get("y2", 0))
+                
+                # Ensure x1 <= x2 and y1 <= y2
+                x1 = min(x1_raw, x2_raw)
+                x2 = max(x1_raw, x2_raw)
+                y1 = min(y1_raw, y2_raw)
+                y2 = max(y1_raw, y2_raw)
                 
                 # Normalize coordinates if they are in pixel format
                 # (merge_step v3.0 returns pixel coordinates)
@@ -1299,11 +1305,16 @@ async def handle_image(
                     detail="No dialogs found in the image. Please ensure the image contains chat messages.",
                 )
      
+            # Add metadata for consistency with merge_step cache
+            image_result_data = image_result.model_dump(mode="json")
+            image_result_data["_model"] = "non-merge-step"
+            image_result_data["_strategy"] = "traditional"
+            
             await cache_service.append_event(
                 session_id=request.session_id,
                 category="image_result",
                 resource=content_url,
-                payload=image_result.model_dump(mode="json"),
+                payload=image_result_data,
                 scene=request.scene,
             )
             items.append(("image", content_url, image_result))

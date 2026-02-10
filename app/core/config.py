@@ -175,6 +175,7 @@ class DebugConfig(BaseSettings):
     log_validation: bool = False  # Log validation details
     log_premium_bbox_calculation: bool = False  # Log detailed bbox coordinate calculation for premium model
     log_full_result_content: bool = False  # Log full result content including long text (may be very verbose)
+    log_cache_operations: bool = False  # Log detailed cache read/write operations (Redis keys, scene values, etc.)
 
 
 class AppConfig(BaseSettings):
