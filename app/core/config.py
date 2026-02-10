@@ -174,6 +174,7 @@ class DebugConfig(BaseSettings):
     log_llm_calls: bool = False  # Log detailed LLM call information
     log_validation: bool = False  # Log validation details
     log_premium_bbox_calculation: bool = False  # Log detailed bbox coordinate calculation for premium model
+    log_full_result_content: bool = False  # Log full result content including long text (may be very verbose)
 
 
 class AppConfig(BaseSettings):

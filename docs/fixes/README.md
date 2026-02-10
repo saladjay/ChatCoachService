@@ -76,6 +76,23 @@
 
 **状态**：✅ 已修复并测试
 
+### [Persona Age=None TypeError 修复](./persona-age-none-fix.md)
+修复当用户画像的 `age` 字段为 `None` 时导致的 TypeError。
+
+**问题**：`TypeError: int() argument must be a string, a bytes-like object or a real number, not 'NoneType'`
+
+**根本原因**：
+- 代码直接使用 `int(persona['age'])`
+- 新用户或 LLM 推断失败时 `age` 为 `None`
+- Python 的 `int()` 不接受 `None` 值
+
+**修复**：
+- 添加 None 检查：只在 `age is not None` 时转换
+- 异常处理：捕获 `ValueError` 和 `TypeError`
+- 日志记录：记录无效的 age 值
+
+**状态**：✅ 已修复并测试
+
 ---
 
 ## 其他修复
@@ -103,10 +120,15 @@ docs/
 │   ├── premium-to-results-fix.md
 │   ├── bbox-coordinate-issue.md
 │   ├── merge-step-v3-compatibility.md
-│   ├── premium-cache-resource-none-fix.md  # NEW
+│   ├── premium-cache-resource-none-fix.md
+│   ├── persona-age-none-fix.md     # NEW
 │   └── ...
 ├── race-strategy/                  # 竞速策略相关
 │   ├── CACHE_BEHAVIOR.md          # 缓存行为分析
+│   └── ...
+├── debugging/                      # 调试功能
+│   ├── README.md                   # 调试功能总览
+│   ├── premium-bbox-calculation-logging.md
 │   └── ...
 ├── guides/                         # 使用指南
 ├── api/                           # API 文档
@@ -126,6 +148,7 @@ docs/
 - `test_premium_logging.py` - Premium 日志测试
 - `test_bbox_normalization.py` - 边界框坐标归一化测试
 - `test_premium_cache_resource_none.py` - Resource=None 处理测试
+- `test_persona_age_none.py` - Persona age=None 处理测试
 
 ---
 
@@ -138,3 +161,21 @@ docs/
 - [Premium 缓存 Resource=None 修复](./premium-cache-resource-none-fix.md)
 - [竞速策略缓存行为](../race-strategy/CACHE_BEHAVIOR.md)
 - [测试脚本](../../test_cache_model_logging.py)
+
+### [Merge Step Bbox 坐标提取修复](./merge-step-bbox-extraction.md)
+修复 merge_step 流程中 `DialogItem.position` 被硬编码为 `[0.0, 0.0, 0.0, 0.0]` 的问题。
+
+**问题**：merge_step 返回的对话项没有真实的气泡坐标
+
+**根本原因**：
+- merge_step 的 LLM 输出包含完整的 bbox 坐标
+- `orchestrator.merge_step_analysis()` 只返回 `ContextResult` 和 `SceneAnalysisResult`
+- `predict.py` 无法访问原始的 bbox 数据
+
+**修复**：
+- 修改 `merge_step_analysis()` 返回原始 `parsed_json`
+- 在 `predict.py` 中从 `parsed_json` 提取 bbox 并归一化
+- 自动检测坐标格式（像素 vs 归一化）
+- 零除保护和缺失数据处理
+
+**状态**：✅ 已修复并测试
