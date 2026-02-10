@@ -1538,9 +1538,20 @@ class UserProfilePersonaInferencer(BasePersonaInferencer):
                         normalized_gender = {"1": "male", "2": "female", "3": "unknown"}[g]
                     else:
                         normalized_gender = None
+                
+                # Handle age - convert to int if not None
+                age_value = persona.get('age')
+                normalized_age: int | None = None
+                if age_value is not None:
+                    try:
+                        normalized_age = int(age_value)
+                    except (ValueError, TypeError):
+                        logger.warning(f"Invalid age value for user {input.user_id}: {age_value}, using None")
+                        normalized_age = None
+                
                 quick_setup_profile = self.user_profile_service.manager.quick_setup_profile(
                     input.user_id,
-                    age=int(persona['age']),
+                    age=normalized_age,
                     intimacy=input.intimacy,
                     gender=normalized_gender,
                     role=persona.get('persona', []),
