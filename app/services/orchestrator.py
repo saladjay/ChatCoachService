@@ -82,8 +82,8 @@ class ExecutionContext:
 class Orchestrator:
     """Central orchestration service for conversation generation.
     
-    Coordinates the flow: Context_Builder → Scene_Analysis → 
-    Persona_Inference → Reply_Generation → Intimacy_Check
+    Coordinates the flow: Context_Builder �?Scene_Analysis �?
+    Persona_Inference �?Reply_Generation �?Intimacy_Check
     
     Implements retry logic, fallback strategies, and cost tracking.
     """
@@ -218,7 +218,7 @@ class Orchestrator:
         request: GenerateReplyRequest
     ) -> SceneAnalysisResult:
         """Analyze the conversation scenario.
-        Flow: Context_Builder → Scene_Analysis
+        Flow: Context_Builder �?Scene_Analysis
 
         """
         if not await self.billing_service.check_quota(request.user_id):
@@ -249,7 +249,7 @@ class Orchestrator:
                 )
                 await self._append_cache_event(request, "context_analysis", context.model_dump(mode="json"))
             
-            # Step 2: Analyze scene (传递 context 以获取当前亲密度)
+            # Step 2: Analyze scene (传�?context 以获取当前亲密度)
             cached_scene = await self._get_cached_payload(request, "scene_analysis")
             if cached_scene:
                 scene = SceneAnalysisResult(**cached_scene)
@@ -259,7 +259,7 @@ class Orchestrator:
                     "scene_analysis",
                     self._analyze_scene,
                     request,
-                    context,  # 传递 context
+                    context,  # 传�?context
                 )
                 await self._append_cache_event(request, "scene_analysis", scene.model_dump(mode="json"))
             return scene
@@ -292,7 +292,7 @@ class Orchestrator:
         This function combines screenshot parsing, context building, and scenario analysis
         into a single LLM call for improved performance.
         
-        Flow: Single LLM call → Parse output → Apply strategy selection → Cache results
+        Flow: Single LLM call �?Parse output �?Apply strategy selection �?Cache results
         
         Args:
             request: GenerateReplyRequest with user info
@@ -361,7 +361,7 @@ class Orchestrator:
                     }
             
             if cached_context and cached_scene:
-                if settings.debug.log_cache_operations:
+                if settings.debug_config.log_cache_operations:
                     logger.error(f"[{request.conversation_id}] ===== CACHE READ DEBUG =====")
                     logger.error(f"[{request.conversation_id}] Using cached merge_step results: session_id={request.conversation_id}, resource={request.resource}, resources={request.resources}, scene={request.scene}")
                     logger.error(f"[{request.conversation_id}] Cached strategy={cached_context.get('_strategy')}, model={cached_context.get('_model')}")
@@ -541,7 +541,7 @@ class Orchestrator:
                     cache_service = self.cache_service  # Use instance variable instead of get_cache_service()
                     
                     # Debug: Log the captured scene value
-                    if settings.debug.log_cache_operations:
+                    if settings.debug_config.log_cache_operations:
                         logger.error(f"[{conversation_id}] ===== SCENE CAPTURE DEBUG =====")
                         logger.error(f"[{conversation_id}] Captured scene_id value: '{scene_id}' (type: {type(scene_id).__name__})")
                         logger.error(f"[{conversation_id}] ===== END SCENE CAPTURE DEBUG =====")
@@ -603,7 +603,7 @@ class Orchestrator:
                                     
                                     # Cache to all resources (same logic as _append_cache_event)
                                     if cache_service and resources:
-                                        if settings.debug.log_cache_operations:
+                                        if settings.debug_config.log_cache_operations:
                                             logger.error(f"[{conversation_id}] ===== PREMIUM CACHE WRITE DEBUG =====")
                                             logger.error(f"[{conversation_id}] Background: Caching premium results to {len(resources)} resource(s): {resources}")
                                             logger.error(f"[{conversation_id}] Premium strategy=premium, model={premium_result.model}")
@@ -618,7 +618,7 @@ class Orchestrator:
                                         
                                         for resource in set(resources):
                                             # Cache screenshot_parse
-                                            if settings.debug.log_cache_operations:
+                                            if settings.debug_config.log_cache_operations:
                                                 logger.error(f"[{conversation_id}] ===== PREMIUM CACHE SCENE DEBUG =====")
                                                 logger.error(f"[{conversation_id}] About to cache with scene_id='{scene_id}' (type: {type(scene_id).__name__})")
                                                 logger.error(f"[{conversation_id}] ===== END PREMIUM CACHE SCENE DEBUG =====")
@@ -885,7 +885,7 @@ class Orchestrator:
             scene_data["_model"] = llm_result.model
             scene_data["_strategy"] = winning_strategy
             
-            if settings.debug.log_cache_operations:
+            if settings.debug_config.log_cache_operations:
                 logger.error(f"[{request.conversation_id}] ===== MULTIMODAL CACHE WRITE DEBUG =====")
                 logger.error(f"[{request.conversation_id}] About to cache {winning_strategy} results: resource={request.resource}, resources={request.resources}, scene={request.scene}")
                 logger.error(f"[{request.conversation_id}] Multimodal strategy={winning_strategy}, model={llm_result.model}")
@@ -1000,7 +1000,7 @@ class Orchestrator:
                 context_data["_strategy"] = "traditional"
                 await self._append_cache_event(request, "context_analysis", context_data)
             
-            # Step 2: Analyze scene (传递 context 以获取当前亲密度)
+            # Step 2: Analyze scene (传�?context 以获取当前亲密度)
             cached_scene = await self._get_cached_payload(request, "scene_analysis")
             if cached_scene:
                 scene = SceneAnalysisResult(**cached_scene)
@@ -1011,7 +1011,7 @@ class Orchestrator:
                     "scene_analysis",
                     self._analyze_scene,
                     request,
-                    context,  # 传递 context
+                    context,  # 传�?context
                 )
                 # Add metadata for consistency with merge_step cache
                 scene_data = scene.model_dump(mode="json")
@@ -1077,8 +1077,8 @@ class Orchestrator:
     ) -> GenerateReplyResponse:
         """Generate a reply by orchestrating all sub-modules.
         
-        Flow: Context_Builder → Scene_Analysis → Persona_Inference → 
-              Reply_Generation → Intimacy_Check
+        Flow: Context_Builder �?Scene_Analysis �?Persona_Inference �?
+              Reply_Generation �?Intimacy_Check
         
         Args:
             request: The generation request with user/conversation info.
@@ -1126,7 +1126,7 @@ class Orchestrator:
                 context_data["_strategy"] = "traditional"
                 await self._append_cache_event(request, "context_analysis", context_data)
             
-            # Step 2: Analyze scene (传递 context 以获取当前亲密度)
+            # Step 2: Analyze scene (传�?context 以获取当前亲密度)
             cached_scene = await self._get_cached_payload(request, "scene_analysis")
             if cached_scene:
                 scene = SceneAnalysisResult(**cached_scene)
@@ -1137,7 +1137,7 @@ class Orchestrator:
                     "scene_analysis",
                     self._analyze_scene,
                     request,
-                    context,  # 传递 context
+                    context,  # 传�?context
                 )
                 # Add metadata for consistency with merge_step cache
                 scene_data = scene.model_dump(mode="json")
@@ -1566,7 +1566,7 @@ class Orchestrator:
                     scene=scene,
                     persona=persona,
                     language=request.language,  # 传递语言参数
-                    reply_sentence=getattr(request, "reply_sentence", ""),  # 新增：传递 reply_sentence
+                    reply_sentence=getattr(request, "reply_sentence", ""),  # 新增：传�?reply_sentence
                 )
                 reply_result = await self._execute_step(
                     exec_ctx,
@@ -1796,7 +1796,7 @@ class Orchestrator:
             if not resource_key:
                 return None
             
-            if settings.debug.log_cache_operations:
+            if settings.debug_config.log_cache_operations:
                 logger.error(f"[{request.conversation_id}] ===== CACHE READ ATTEMPT =====")
                 logger.error(f"[{request.conversation_id}] Reading cache for category={category}, resource_key={resource_key}, scene={request.scene}")
                 logger.error(f"[{request.conversation_id}] request.resource={request.resource}, request.resources={request.resources}")
@@ -1812,7 +1812,7 @@ class Orchestrator:
                 payload = cached_event.get("payload")
                 if isinstance(payload, dict):
                     logger.info(f"Cache hit for category={category}, resource={resource_key}")
-                    if settings.debug.log_cache_operations:
+                    if settings.debug_config.log_cache_operations:
                         logger.error(f"[{request.conversation_id}] ===== CACHE HIT DETAILS =====")
                         logger.error(f"[{request.conversation_id}] Cache hit: category={category}, resource={resource_key}")
                         logger.error(f"[{request.conversation_id}] Cached strategy={payload.get('_strategy')}, model={payload.get('_model')}")
@@ -1905,3 +1905,4 @@ class Orchestrator:
             Number of active background tasks
         """
         return len(self._background_tasks)
+
