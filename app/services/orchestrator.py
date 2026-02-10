@@ -477,7 +477,7 @@ class Orchestrator:
                     logger.info(f"[{request.conversation_id}] Premium task still running, will cache in background")
                     
                     # Extract necessary info from request before it becomes invalid
-                    resource = request.resource
+                    resource = request.resource or ""  # Use empty string if None
                     conversation_id = request.conversation_id
                     scene = request.scene if hasattr(request, 'scene') else ""
                     cache_service = self.cache_service  # Use instance variable instead of get_cache_service()
@@ -605,8 +605,28 @@ class Orchestrator:
                             premium_scene_data["_model"] = premium_result_or_task.model
                             premium_scene_data["_strategy"] = "premium"
                             
-                            await self._cache_payload(request, "context_analysis", premium_context_data)
-                            await self._cache_payload(request, "scene_analysis", premium_scene_data)
+                            # Cache using cache_service.append_event
+                            resource = request.resource or ""  # Use empty string if None
+                            scene = request.scene if hasattr(request, 'scene') else ""
+                            
+                            # Cache context_analysis
+                            await self.cache_service.append_event(
+                                session_id=request.conversation_id,
+                                category="context_analysis",
+                                resource=resource,
+                                payload=premium_context_data,
+                                scene=scene
+                            )
+                            
+                            # Cache scene_analysis
+                            await self.cache_service.append_event(
+                                session_id=request.conversation_id,
+                                category="scene_analysis",
+                                resource=resource,
+                                payload=premium_scene_data,
+                                scene=scene
+                            )
+                            
                             logger.info(f"[{request.conversation_id}] Premium result cached successfully")
                         else:
                             logger.warning(f"[{request.conversation_id}] Premium result invalid, not caching")
