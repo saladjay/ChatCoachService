@@ -149,6 +149,11 @@ class SessionCategorizedCacheService:
 
         last_key = self._key_last(session_id, resource_key, category)
         await redis_client.set(last_key, event_str)
+        
+        # Log cache update for debugging
+        strategy = payload.get('_strategy', 'unknown') if isinstance(payload, dict) else 'unknown'
+        model = payload.get('_model', 'unknown') if isinstance(payload, dict) else 'unknown'
+        logger.debug(f"Cache updated: session={session_id}, resource={resource_key}, category={category}, strategy={strategy}, model={model}")
 
         cats_key = self._key_resource_cats(session_id, resource_key)
         await redis_client.hset(cats_key, category, event_str)
