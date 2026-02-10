@@ -21,6 +21,8 @@
 - **[TIMING_LOGS_QUICK_START.md](debugging/TIMING_LOGS_QUICK_START.md)** - 时间日志快速开始
 
 ### 🔧 问题修复 ([fixes/](fixes/))
+- **[README.md](fixes/README.md)** - 修复文档索引
+- **[cache-and-background-task-optimization.md](fixes/cache-and-background-task-optimization.md)** - 缓存和后台任务优化（2026-02-10）✅
 - **[COORDINATE_NORMALIZATION.md](fixes/COORDINATE_NORMALIZATION.md)** - 坐标归一化修复
 - **[TARGET_ID.md](fixes/TARGET_ID.md)** - Target ID 修复
 - **[VISION_API_PROVIDER.md](fixes/VISION_API_PROVIDER.md)** - Vision API Provider 修复
@@ -153,6 +155,7 @@ docs/
 
 ## 版本历史
 
+- **2026-02-10**: 添加缓存和后台任务优化文档，合并重复文档
 - **2026-02-10**: 重组文档结构，按功能分类到子目录
 - **2026-02-10**: 添加竞速策略文档系列
 - **2026-02-09**: 更新调试配置和日志文档
