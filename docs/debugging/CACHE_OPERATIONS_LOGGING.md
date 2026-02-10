@@ -140,7 +140,7 @@ set DEBUG_LOG_CACHE_OPERATIONS=false
 
 ## 相关文件
 
-- `app/core/config.py` - 配置定义（`DebugConfig.log_cache_operations`）
+- `app/core/config.py` - 配置定义（`DebugConfig.log_cache_operations`，通过`settings.debug_config`访问）
 - `app/services/session_categorized_cache_service.py` - Cache服务日志实现
 - `app/services/orchestrator.py` - Orchestrator cache操作日志实现
 

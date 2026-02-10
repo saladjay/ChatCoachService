@@ -128,7 +128,7 @@ class SessionCategorizedCacheService:
         session_id_with_scene = f"{session_id}_{scene_str}"
         
         from app.core.config import settings
-        if settings.debug.log_cache_operations:
+        if settings.debug_config.log_cache_operations:
             logger.error(f"===== APPEND_EVENT SCENE DEBUG =====")
             logger.error(f"Original scene: '{scene}' (type: {type(scene).__name__})")
             logger.error(f"Converted scene_str: '{scene_str}'")
@@ -160,7 +160,7 @@ class SessionCategorizedCacheService:
             await redis_client.ltrim(timeline_key, -self._timeline_max_items, -1)
 
         last_key = self._key_last(session_id_with_scene, resource_key, category)
-        if settings.debug.log_cache_operations:
+        if settings.debug_config.log_cache_operations:
             logger.error(f"===== REDIS SET DEBUG =====")
             logger.error(f"Setting last_key: {last_key}")
             logger.error(f"Event strategy: {payload.get('_strategy')}, model: {payload.get('_model')}")
@@ -255,7 +255,7 @@ class SessionCategorizedCacheService:
         session_id_with_scene = f"{session_id}_{scene_str}"
         
         from app.core.config import settings
-        if settings.debug.log_cache_operations:
+        if settings.debug_config.log_cache_operations:
             logger.error(f"===== GET_RESOURCE_CATEGORY_LAST SCENE DEBUG =====")
             logger.error(f"Original scene: '{scene}' (type: {type(scene).__name__})")
             logger.error(f"Converted scene_str: '{scene_str}'")
@@ -269,11 +269,11 @@ class SessionCategorizedCacheService:
         resource_key = self._resource_key(resource)
 
         last_key = self._key_last(session_id_with_scene, resource_key, category)
-        if settings.debug.log_cache_operations:
+        if settings.debug_config.log_cache_operations:
             logger.error(f"===== REDIS GET DEBUG =====")
             logger.error(f"Getting last_key: {last_key}")
         value = await redis_client.get(last_key)
-        if settings.debug.log_cache_operations:
+        if settings.debug_config.log_cache_operations:
             logger.error(f"Redis returned value: {value[:200] if value else None}...")
             logger.error(f"===== END REDIS GET DEBUG =====")
         
@@ -295,7 +295,7 @@ class SessionCategorizedCacheService:
             return None
         
         result = json.loads(value)
-        if settings.debug.log_cache_operations:
+        if settings.debug_config.log_cache_operations:
             logger.error(f"===== PARSED RESULT DEBUG =====")
             logger.error(f"Parsed result keys: {result.keys() if isinstance(result, dict) else 'not a dict'}")
             if isinstance(result, dict) and 'payload' in result:
