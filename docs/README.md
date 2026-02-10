@@ -5,6 +5,7 @@
 ### 🏁 LLM 竞速策略 ([race-strategy/](race-strategy/))
 - **[RACE_STRATEGY.md](race-strategy/RACE_STRATEGY.md)** - 竞速策略完整说明（先到先得原则）
 - **[BACKGROUND_CACHING.md](race-strategy/BACKGROUND_CACHING.md)** - 后台缓存解决方案
+- **[CACHE_BEHAVIOR.md](race-strategy/CACHE_BEHAVIOR.md)** - 缓存行为分析（Premium 失败场景）
 - **[MIGRATION.md](race-strategy/MIGRATION.md)** - 从旧策略迁移指南
 - **[VERIFICATION.md](race-strategy/VERIFICATION.md)** - 实现验证报告
 
@@ -23,6 +24,7 @@
 ### 🔧 问题修复 ([fixes/](fixes/))
 - **[README.md](fixes/README.md)** - 修复文档索引
 - **[cache-and-background-task-optimization.md](fixes/cache-and-background-task-optimization.md)** - 缓存和后台任务优化（2026-02-10）✅
+- **[premium-to-results-fix.md](fixes/premium-to-results-fix.md)** - Premium to_results 方法修复（2026-02-10）✅
 - **[COORDINATE_NORMALIZATION.md](fixes/COORDINATE_NORMALIZATION.md)** - 坐标归一化修复
 - **[TARGET_ID.md](fixes/TARGET_ID.md)** - Target ID 修复
 - **[VISION_API_PROVIDER.md](fixes/VISION_API_PROVIDER.md)** - Vision API Provider 修复

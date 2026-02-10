@@ -48,6 +48,22 @@
 
 ---
 
+### [CACHE_BEHAVIOR.md](CACHE_BEHAVIOR.md)
+**缓存行为分析**
+
+详细分析当 multimodal 成功但 premium 失败时的缓存行为。
+
+**关键内容**：
+- 4种失败场景分析
+- 缓存覆盖规则
+- 缓存内容示例
+- 日志示例
+- 监控建议
+
+**适合**：开发者、运维人员
+
+---
+
 ### [MIGRATION.md](MIGRATION.md)
 **从旧策略迁移指南**
 
