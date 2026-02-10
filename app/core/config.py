@@ -173,6 +173,7 @@ class DebugConfig(BaseSettings):
     log_race_strategy: bool = True  # Log race strategy details
     log_llm_calls: bool = False  # Log detailed LLM call information
     log_validation: bool = False  # Log validation details
+    log_premium_bbox_calculation: bool = False  # Log detailed bbox coordinate calculation for premium model
 
 
 class AppConfig(BaseSettings):

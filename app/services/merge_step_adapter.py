@@ -82,6 +82,19 @@ class MergeStepAdapter:
         llm_reported_width = image_metadata.get("original_width", 0)
         llm_reported_height = image_metadata.get("original_height", 0)
         
+        # Check if detailed bbox calculation logging is enabled
+        from app.core.config import settings
+        log_bbox_calc = settings.debug_config.log_premium_bbox_calculation
+        
+        if log_bbox_calc:
+            logger.info(f"{'='*80}")
+            logger.info(f"PREMIUM BBOX CALCULATION - START")
+            logger.info(f"{'='*80}")
+            logger.info(f"Image dimensions (actual): {image_width}x{image_height}")
+            if llm_reported_width > 0 and llm_reported_height > 0:
+                logger.info(f"Image dimensions (LLM reported): {llm_reported_width}x{llm_reported_height}")
+            logger.info(f"Total bubbles to process: {len(bubbles_data)}")
+        
         # Validate LLM-reported dimensions against actual dimensions
         if llm_reported_width > 0 and llm_reported_height > 0:
             if abs(llm_reported_width - image_width) > 5 or abs(llm_reported_height - image_height) > 5:
@@ -98,12 +111,20 @@ class MergeStepAdapter:
         max_y = 0
         all_coords_small = True
         
-        for bubble_data in bubbles_data:
+        if log_bbox_calc:
+            logger.info(f"\n{'─'*80}")
+            logger.info(f"PASS 1: COORDINATE SCALE DETECTION")
+            logger.info(f"{'─'*80}")
+        
+        for idx, bubble_data in enumerate(bubbles_data):
             bbox_data = bubble_data.get("bbox", {})
             x1 = float(bbox_data.get("x1", 0))
             y1 = float(bbox_data.get("y1", 0))
             x2 = float(bbox_data.get("x2", 0))
             y2 = float(bbox_data.get("y2", 0))
+            
+            if log_bbox_calc:
+                logger.info(f"  Bubble {idx+1}: bbox=[{x1}, {y1}, {x2}, {y2}]")
             
             max_x = max(max_x, x1, x2)
             max_y = max(max_y, y1, y2)
@@ -114,61 +135,128 @@ class MergeStepAdapter:
         # Determine scale
         if all_coords_small and max_x <= 1.0 and max_y <= 1.0:
             coordinate_scale = "normalized_0_1"
+            if log_bbox_calc:
+                logger.info(f"\n  Detection result: NORMALIZED (0-1 range)")
+                logger.info(f"  Reason: All coordinates <= 1.0")
+                logger.info(f"  Max X: {max_x}, Max Y: {max_y}")
             logger.warning(
                 f"Detected normalized coordinates (0-1 range) despite v3.0 prompt requiring pixels. "
                 f"This may indicate LLM is not following the prompt correctly."
             )
         elif max_x > image_width or max_y > image_height:
             coordinate_scale = "normalized_0_1000"
+            if log_bbox_calc:
+                logger.info(f"\n  Detection result: NORMALIZED (0-1000 range)")
+                logger.info(f"  Reason: Coordinates exceed image bounds")
+                logger.info(f"  Max X: {max_x} > Image Width: {image_width}")
+                logger.info(f"  Max Y: {max_y} > Image Height: {image_height}")
             logger.warning(
                 f"Detected coordinates exceeding image bounds "
                 f"(max_x={max_x} > {image_width} or max_y={max_y} > {image_height}). "
                 f"Assuming 0-1000 scale. This should not happen with v3.0 prompt."
             )
         else:
+            if log_bbox_calc:
+                logger.info(f"\n  Detection result: PIXELS (no normalization needed)")
+                logger.info(f"  Reason: All coordinates within image bounds")
+                logger.info(f"  Max X: {max_x} <= Image Width: {image_width}")
+                logger.info(f"  Max Y: {max_y} <= Image Height: {image_height}")
             logger.debug(f"Coordinates appear to be in pixels (as expected with v3.0 prompt)")
         
         bubbles = []
+        
+        if log_bbox_calc:
+            logger.info(f"\n{'─'*80}")
+            logger.info(f"PASS 2: COORDINATE NORMALIZATION AND VALIDATION")
+            logger.info(f"{'─'*80}")
+            logger.info(f"Scale to apply: {coordinate_scale}")
         
         # Second pass: process bubbles with detected scale
         for idx, bubble_data in enumerate(bubbles_data):
             bbox_data = bubble_data.get("bbox", {})
             
             # Extract bbox coordinates
-            x1 = float(bbox_data.get("x1", 0))
-            y1 = float(bbox_data.get("y1", 0))
-            x2 = float(bbox_data.get("x2", 0))
-            y2 = float(bbox_data.get("y2", 0))
+            x1_raw = float(bbox_data.get("x1", 0))
+            y1_raw = float(bbox_data.get("y1", 0))
+            x2_raw = float(bbox_data.get("x2", 0))
+            y2_raw = float(bbox_data.get("y2", 0))
+            
+            if log_bbox_calc:
+                logger.info(f"\n  Bubble {idx+1}:")
+                logger.info(f"    Raw coordinates: [{x1_raw}, {y1_raw}, {x2_raw}, {y2_raw}]")
+            
+            x1 = x1_raw
+            y1 = y1_raw
+            x2 = x2_raw
+            y2 = y2_raw
             
             # Apply scale conversion
             if coordinate_scale == "normalized_0_1":
-                x1 = x1 * image_width
-                y1 = y1 * image_height
-                x2 = x2 * image_width
-                y2 = y2 * image_height
+                if log_bbox_calc:
+                    logger.info(f"    Applying 0-1 normalization:")
+                    logger.info(f"      x1 = {x1_raw} * {image_width} = {x1_raw * image_width}")
+                    logger.info(f"      y1 = {y1_raw} * {image_height} = {y1_raw * image_height}")
+                    logger.info(f"      x2 = {x2_raw} * {image_width} = {x2_raw * image_width}")
+                    logger.info(f"      y2 = {y2_raw} * {image_height} = {y2_raw * image_height}")
+                x1 = x1_raw * image_width
+                y1 = y1_raw * image_height
+                x2 = x2_raw * image_width
+                y2 = y2_raw * image_height
             elif coordinate_scale == "normalized_0_1000":
-                x1 = (x1 / 1000.0) * image_width
-                y1 = (y1 / 1000.0) * image_height
-                x2 = (x2 / 1000.0) * image_width
-                y2 = (y2 / 1000.0) * image_height
+                if log_bbox_calc:
+                    logger.info(f"    Applying 0-1000 normalization:")
+                    logger.info(f"      x1 = ({x1_raw} / 1000) * {image_width} = {(x1_raw / 1000.0) * image_width}")
+                    logger.info(f"      y1 = ({y1_raw} / 1000) * {image_height} = {(y1_raw / 1000.0) * image_height}")
+                    logger.info(f"      x2 = ({x2_raw} / 1000) * {image_width} = {(x2_raw / 1000.0) * image_width}")
+                    logger.info(f"      y2 = ({y2_raw} / 1000) * {image_height} = {(y2_raw / 1000.0) * image_height}")
+                x1 = (x1_raw / 1000.0) * image_width
+                y1 = (y1_raw / 1000.0) * image_height
+                x2 = (x2_raw / 1000.0) * image_width
+                y2 = (y2_raw / 1000.0) * image_height
+            else:
+                if log_bbox_calc:
+                    logger.info(f"    No normalization needed (already in pixels)")
+            
+            if log_bbox_calc:
+                logger.info(f"    After normalization: [{x1:.2f}, {y1:.2f}, {x2:.2f}, {y2:.2f}]")
             
             # Validate final coordinates (v3.0 requirements)
-            if x1 >= x2 or y1 >= y2:
+            validation_errors = []
+            if x1 >= x2:
+                validation_errors.append(f"x1={x1:.1f} >= x2={x2:.1f}")
+            if y1 >= y2:
+                validation_errors.append(f"y1={y1:.1f} >= y2={y2:.1f}")
+            if x2 > image_width:
+                validation_errors.append(f"x2={x2:.1f} > image_width={image_width}")
+            if y2 > image_height:
+                validation_errors.append(f"y2={y2:.1f} > image_height={image_height}")
+            
+            if validation_errors:
+                if log_bbox_calc:
+                    logger.info(f"    ⚠️  Validation errors: {', '.join(validation_errors)}")
                 logger.error(
                     f"Bubble {idx}: Invalid bbox coordinates (violates x2>x1, y2>y1): "
                     f"x1={x1:.1f} >= x2={x2:.1f} or y1={y1:.1f} >= y2={y2:.1f}"
                 )
-            if x2 > image_width or y2 > image_height:
-                logger.warning(
-                    f"Bubble {idx}: Bbox exceeds image bounds after normalization: "
-                    f"bbox=[{x1:.1f},{y1:.1f},{x2:.1f},{y2:.1f}], image={image_width}x{image_height}"
-                )
             
             # Convert to integers as required by v3.0 prompt
-            x1 = int(round(x1))
-            y1 = int(round(y1))
-            x2 = int(round(x2))
-            y2 = int(round(y2))
+            x1_int = int(round(x1))
+            y1_int = int(round(y1))
+            x2_int = int(round(x2))
+            y2_int = int(round(y2))
+            
+            if log_bbox_calc:
+                logger.info(f"    After rounding to integers: [{x1_int}, {y1_int}, {x2_int}, {y2_int}]")
+                width = x2_int - x1_int
+                height = y2_int - y1_int
+                logger.info(f"    Final dimensions: {width}px × {height}px")
+                if not validation_errors:
+                    logger.info(f"    ✓ Validation passed")
+            
+            x1 = x1_int
+            y1 = y1_int
+            x2 = x2_int
+            y2 = y2_int
             
             # Calculate center_x and center_y if missing
             center_x = bubble_data.get("center_x")
@@ -224,6 +312,38 @@ class MergeStepAdapter:
                 column=column,
                 confidence=confidence,
             ))
+        
+        # Log summary if detailed logging is enabled
+        if log_bbox_calc:
+            logger.info(f"\n{'─'*80}")
+            logger.info(f"SUMMARY")
+            logger.info(f"{'─'*80}")
+            logger.info(f"Total bubbles processed: {len(bubbles)}")
+            logger.info(f"Coordinate scale used: {coordinate_scale}")
+            logger.info(f"Image dimensions: {image_width}x{image_height}")
+            
+            # Calculate statistics
+            total_width = sum(b.bbox.x2 - b.bbox.x1 for b in bubbles)
+            total_height = sum(b.bbox.y2 - b.bbox.y1 for b in bubbles)
+            avg_width = total_width / len(bubbles) if bubbles else 0
+            avg_height = total_height / len(bubbles) if bubbles else 0
+            
+            logger.info(f"Average bubble size: {avg_width:.1f}px × {avg_height:.1f}px")
+            
+            # List all final coordinates
+            logger.info(f"\nFinal bubble coordinates:")
+            for i, bubble in enumerate(bubbles):
+                width = bubble.bbox.x2 - bubble.bbox.x1
+                height = bubble.bbox.y2 - bubble.bbox.y1
+                logger.info(
+                    f"  [{i+1}] {bubble.sender}({bubble.column}): "
+                    f"bbox=[{bubble.bbox.x1},{bubble.bbox.y1},{bubble.bbox.x2},{bubble.bbox.y2}] "
+                    f"size={width}×{height}px"
+                )
+            
+            logger.info(f"{'='*80}")
+            logger.info(f"PREMIUM BBOX CALCULATION - END")
+            logger.info(f"{'='*80}\n")
         
         # Extract layout with defaults
         layout_data = screenshot_data.get("layout", {})
