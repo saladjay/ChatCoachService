@@ -218,9 +218,24 @@ class PromptAssembler:
 
             policy_block = await self._compile_policy_block(input.user_id, context.conversation)
 
+            logger.info("="*60)
+            logger.info("PromptAssembler: Determining reply_sentence (Last Message)")
+            
             reply_sentence = getattr(input, "reply_sentence", "")
+            logger.info(f"  - Input reply_sentence: '{reply_sentence}'")
+            
             if not isinstance(reply_sentence, str) or not reply_sentence.strip():
-                reply_sentence = self._infer_reply_sentence(context.conversation)
+                logger.info(f"  - Input reply_sentence is empty, inferring from conversation")
+                # 从 request 中获取 explicit_reply_sentence（如果有）
+                explicit_reply_sentence = ""
+                if hasattr(input, "request") and hasattr(input.request, "reply_sentence"):
+                    explicit_reply_sentence = input.request.reply_sentence
+                    logger.info(f"  - Explicit reply_sentence from request: '{explicit_reply_sentence}'")
+                
+                reply_sentence = self._infer_reply_sentence(context.conversation, explicit_reply_sentence)
+            
+            logger.info(f"  - Final reply_sentence (Last Message): '{reply_sentence}'")
+            logger.info("="*60)
 
             prompt_template = self._prompt_manager.get_active_prompt(PromptType.REPLY_GENERATION)
             prompt_template = (prompt_template or "").strip()
@@ -245,8 +260,34 @@ class PromptAssembler:
             
             return f"[PROMPT:reply_generation_full_v1]\n{base_prompt}"
 
-    def _infer_reply_sentence(self, messages: list[Any]) -> str:
+    def _infer_reply_sentence(self, messages: list[Any], explicit_reply_sentence: str = "") -> str:
+        """
+        推断 reply_sentence（Last Message）。
+        
+        优先级：
+        1. 如果提供了 explicit_reply_sentence，直接使用
+        2. 否则，使用原有逻辑（从后往前找第一个非 user 的消息）
+        
+        Args:
+            messages: 对话消息列表
+            explicit_reply_sentence: 明确指定的 reply_sentence（可选）
+        
+        Returns:
+            推断出的 reply_sentence
+        """
+        logger.info("  _infer_reply_sentence called:")
+        logger.info(f"    - Explicit reply_sentence provided: {bool(explicit_reply_sentence)}")
+        
+        # 优先使用明确指定的 reply_sentence
+        if explicit_reply_sentence and explicit_reply_sentence.strip():
+            logger.info(f"    - Using explicit reply_sentence: '{explicit_reply_sentence}'")
+            return explicit_reply_sentence.strip()
+        
+        logger.info(f"    - No explicit reply_sentence, inferring from {len(messages)} messages")
+        
+        # 原有逻辑（后备方案）
         if not messages:
+            logger.info(f"    - No messages available, returning empty string")
             return ""
 
         def _get(msg: Any) -> tuple[str, str]:
@@ -258,7 +299,7 @@ class PromptAssembler:
                 content = str(msg.get("content", ""))
             return speaker, content
 
-        user_speakers = {"user", "用户", "我", "me"}
+        user_speakers = {"user", "用户", "我", "me", "right"}  # 添加 "right"
 
         for msg in reversed(messages):
             speaker, content = _get(msg)
@@ -267,13 +308,19 @@ class PromptAssembler:
             text = content.strip()
             if not text:
                 continue
-            if str(speaker).strip() not in user_speakers:
+            if str(speaker).strip().lower() not in user_speakers:
+                logger.info(f"    - Found non-user message (speaker='{speaker}'): '{text}'")
                 return text
 
         for msg in reversed(messages):
             _, content = _get(msg)
             if isinstance(content, str) and content.strip():
+                logger.info(f"    - Fallback: using last message: '{content.strip()}'")
                 return content.strip()
+        
+        logger.info(f"    - No reply_sentence found, returning empty string")
+        return ""
+        logger.warning("No reply_sentence found")
         return ""
 
     async def _compile_policy_block(self, user_id: str, messages: list[Any] | None = None) -> str:
