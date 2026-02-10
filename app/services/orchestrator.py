@@ -1,4 +1,4 @@
-"""Orchestrator service for coordinating the conversation generation flow.
+﻿"""Orchestrator service for coordinating the conversation generation flow.
 
 This module implements the central orchestration logic that:
 - Coordinates sub-module calls in sequence
@@ -82,8 +82,8 @@ class ExecutionContext:
 class Orchestrator:
     """Central orchestration service for conversation generation.
     
-    Coordinates the flow: Context_Builder �?Scene_Analysis �?
-    Persona_Inference �?Reply_Generation �?Intimacy_Check
+    Coordinates the flow: Context_Builder → Scene_Analysis →
+    Persona_Inference → Reply_Generation → Intimacy_Check
     
     Implements retry logic, fallback strategies, and cost tracking.
     """
@@ -218,7 +218,7 @@ class Orchestrator:
         request: GenerateReplyRequest
     ) -> SceneAnalysisResult:
         """Analyze the conversation scenario.
-        Flow: Context_Builder �?Scene_Analysis
+        Flow: Context_Builder Scene_Analysis
 
         """
         if not await self.billing_service.check_quota(request.user_id):
@@ -249,7 +249,7 @@ class Orchestrator:
                 )
                 await self._append_cache_event(request, "context_analysis", context.model_dump(mode="json"))
             
-            # Step 2: Analyze scene (传�?context 以获取当前亲密度)
+            # Step 2: Analyze scene (传context 以获取当前亲密度)
             cached_scene = await self._get_cached_payload(request, "scene_analysis")
             if cached_scene:
                 scene = SceneAnalysisResult(**cached_scene)
@@ -259,7 +259,7 @@ class Orchestrator:
                     "scene_analysis",
                     self._analyze_scene,
                     request,
-                    context,  # 传�?context
+                    context,  # 传context
                 )
                 await self._append_cache_event(request, "scene_analysis", scene.model_dump(mode="json"))
             return scene
@@ -292,7 +292,7 @@ class Orchestrator:
         This function combines screenshot parsing, context building, and scenario analysis
         into a single LLM call for improved performance.
         
-        Flow: Single LLM call �?Parse output �?Apply strategy selection �?Cache results
+        Flow: Single LLM call Parse output Apply strategy selection Cache results
         
         Args:
             request: GenerateReplyRequest with user info
@@ -1000,7 +1000,7 @@ class Orchestrator:
                 context_data["_strategy"] = "traditional"
                 await self._append_cache_event(request, "context_analysis", context_data)
             
-            # Step 2: Analyze scene (传�?context 以获取当前亲密度)
+            # Step 2: Analyze scene (传context 以获取当前亲密度)
             cached_scene = await self._get_cached_payload(request, "scene_analysis")
             if cached_scene:
                 scene = SceneAnalysisResult(**cached_scene)
@@ -1011,7 +1011,7 @@ class Orchestrator:
                     "scene_analysis",
                     self._analyze_scene,
                     request,
-                    context,  # 传�?context
+                    context,  # 传context
                 )
                 # Add metadata for consistency with merge_step cache
                 scene_data = scene.model_dump(mode="json")
@@ -1077,8 +1077,8 @@ class Orchestrator:
     ) -> GenerateReplyResponse:
         """Generate a reply by orchestrating all sub-modules.
         
-        Flow: Context_Builder �?Scene_Analysis �?Persona_Inference �?
-              Reply_Generation �?Intimacy_Check
+        Flow: Context_Builder Scene_Analysis Persona_Inference 
+              Reply_Generation Intimacy_Check
         
         Args:
             request: The generation request with user/conversation info.
@@ -1126,7 +1126,7 @@ class Orchestrator:
                 context_data["_strategy"] = "traditional"
                 await self._append_cache_event(request, "context_analysis", context_data)
             
-            # Step 2: Analyze scene (传�?context 以获取当前亲密度)
+            # Step 2: Analyze scene (传context 以获取当前亲密度)
             cached_scene = await self._get_cached_payload(request, "scene_analysis")
             if cached_scene:
                 scene = SceneAnalysisResult(**cached_scene)
@@ -1137,7 +1137,7 @@ class Orchestrator:
                     "scene_analysis",
                     self._analyze_scene,
                     request,
-                    context,  # 传�?context
+                    context,  # 传context
                 )
                 # Add metadata for consistency with merge_step cache
                 scene_data = scene.model_dump(mode="json")
@@ -1566,7 +1566,7 @@ class Orchestrator:
                     scene=scene,
                     persona=persona,
                     language=request.language,  # 传递语言参数
-                    reply_sentence=getattr(request, "reply_sentence", ""),  # 新增：传�?reply_sentence
+                    reply_sentence=getattr(request, "reply_sentence", ""),  # 新增：传reply_sentence
                 )
                 reply_result = await self._execute_step(
                     exec_ctx,
@@ -1905,4 +1905,5 @@ class Orchestrator:
             Number of active background tasks
         """
         return len(self._background_tasks)
+
 
