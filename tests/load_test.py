@@ -20,6 +20,29 @@ import statistics
 
 import httpx
 
+# Load environment variables from .env file
+from pathlib import Path
+import sys
+
+# Add project root to path and load .env
+project_root = Path(__file__).parent.parent
+if str(project_root) not in sys.path:
+    sys.path.insert(0, str(project_root))
+
+# Load .env file before importing app modules
+try:
+    from dotenv import load_dotenv
+    env_file = project_root / ".env"
+    if env_file.exists():
+        load_dotenv(env_file)
+        print(f"✓ Loaded environment variables from {env_file}")
+    else:
+        print(f"⚠ .env file not found at {env_file}")
+except ImportError:
+    print("⚠ python-dotenv not installed, environment variables from .env will not be loaded")
+except Exception as e:
+    print(f"⚠ Error loading .env file: {e}")
+
 
 @dataclass
 class TestResult:
@@ -114,6 +137,7 @@ class LoadTester:
         image_url: str | None = None,
         disable_cache: bool = False,
         sign_secret: str = "1a57ef4a6c2a433f8824f645abc0a18a",
+        language: str = "en",
     ):
         """Initialize load tester.
         
@@ -123,12 +147,14 @@ class LoadTester:
             image_url: Optional custom image URL to test
             disable_cache: If True, bypass cache by using unique session IDs
             sign_secret: Secret for generating sign (default from config.yaml)
+            language: Language code for replies (en, zh, etc.)
         """
         self.base_url = base_url.rstrip('/')
         self.timeout = timeout
         self.image_url = image_url
         self.disable_cache = disable_cache
         self.sign_secret = sign_secret
+        self.language = language
         self.stats = LoadTestStats()
         # Use timestamp to ensure unique counters across test runs
         self._request_counter = int(time.time() * 1000)  # milliseconds since epoch
@@ -163,6 +189,7 @@ class LoadTester:
                         disable_cache=True,
                         request_index=self._request_counter,
                         sign_secret=self.sign_secret,
+                        language=self.language,
                     )
                     self._request_counter += 1
                 
@@ -241,6 +268,7 @@ class LoadTester:
         print(f"  Total Requests:    {num_requests}")
         print(f"  Concurrent:        {concurrent}")
         print(f"  Method:            {method}")
+        print(f"  Language:          {self.language}")
         if self.image_url:
             print(f"  Image URL:         {self.image_url}")
         if self.disable_cache:
@@ -372,6 +400,7 @@ def create_test_payload(
     disable_cache: bool = False,
     request_index: int = 0,
     sign_secret: str = "1a57ef4a6c2a433f8824f645abc0a18a",
+    language: str = "en",
 ) -> Dict[str, Any]:
     """Create a test payload for the predict endpoint.
     
@@ -380,6 +409,7 @@ def create_test_payload(
         disable_cache: If True, use unique session_id to bypass cache
         request_index: Request index for unique session_id generation
         sign_secret: Secret for generating sign (default from config.yaml)
+        language: Language code (en, zh, etc.)
     
     Returns:
         Test payload dictionary
@@ -397,7 +427,7 @@ def create_test_payload(
         "user_id": "load_test_user",
         "session_id": session_id,
         "request_id": f"load_test_request_{request_index}",
-        "language": "en",
+        "language": language,
         "scene": 1,
         "scene_analysis": True,
         "reply": True,
@@ -429,8 +459,84 @@ async def main():
     parser.add_argument("--disable-cache", action="store_true", help="Disable cache by using unique session IDs")
     parser.add_argument("--sign-secret", type=str, default="1a57ef4a6c2a433f8824f645abc0a18a", 
                         help="Sign secret for request validation (default from config.yaml)")
+    parser.add_argument("--language", type=str, default="en", 
+                        help="Language code for replies (en, zh, etc.)")
     
     args = parser.parse_args()
+    
+    # Print current configuration
+    print("\n" + "=" * 80)
+    print("LOAD TEST CONFIGURATION")
+    print("=" * 80)
+    
+    # Try to load and print LLM configuration
+    try:
+        import sys
+        from pathlib import Path
+        
+        # Add project root to path
+        project_root = Path(__file__).parent.parent
+        if str(project_root) not in sys.path:
+            sys.path.insert(0, str(project_root))
+        
+        from app.core.config import settings
+        
+        print(f"\nApplication Configuration:")
+        print(f"  Default Provider:    {settings.llm.default_provider} (fallback)")
+        print(f"  Default Model:       {settings.llm.default_model} (fallback)")
+        
+        # Try to load actual LLM adapter config
+        try:
+            llm_adapter_path = project_root / "core" / "llm_adapter"
+            if str(llm_adapter_path) not in sys.path:
+                sys.path.insert(0, str(llm_adapter_path))
+            
+            from llm_adapter import ConfigManager
+            
+            config_path = llm_adapter_path / "config.yaml"
+            if config_path.exists():
+                config_manager = ConfigManager(str(config_path))
+                default_provider = config_manager.get_default_provider()
+                provider_config = config_manager.get_provider_config(default_provider)
+                
+                print(f"\nActual LLM Configuration (from core/llm_adapter/config.yaml):")
+                print(f"  Default Provider:    {default_provider}")
+                print(f"  Cheap Model:         {provider_config.models.cheap}")
+                print(f"  Normal Model:        {provider_config.models.normal}")
+                print(f"  Premium Model:       {provider_config.models.premium}")
+                print(f"  Multimodal Model:    {provider_config.models.multimodal}")
+                
+                # Show proxy status
+                proxy_url = config_manager.get_proxy_url()
+                if proxy_url:
+                    print(f"  Proxy:               {proxy_url} (ENABLED)")
+                else:
+                    print(f"  Proxy:               DISABLED")
+            else:
+                print(f"\n⚠️  LLM config file not found: {config_path}")
+        except Exception as e:
+            import os
+            print(f"\n⚠️  Could not load LLM adapter config: {e}")
+            print(f"    Hint: Make sure .env file exists and contains LLM_DEFAULT_PROVIDER")
+            print(f"    Current LLM_DEFAULT_PROVIDER: {os.getenv('LLM_DEFAULT_PROVIDER', 'NOT SET')}")
+        
+        print(f"\nMerge Step Configuration:")
+        print(f"  USE_MERGE_STEP:      {settings.use_merge_step}")
+        
+        print(f"\nCache Configuration:")
+        print(f"  NO_REPLY_CACHE:      {settings.no_reply_cache}")
+        print(f"  NO_PERSONA_CACHE:    {settings.no_persona_cache}")
+        
+        print(f"\nTrace Configuration:")
+        print(f"  TRACE_ENABLED:       {settings.trace.enabled}")
+        print(f"  TRACE_LEVEL:         {settings.trace.level}")
+        print(f"  TRACE_LOG_PROMPT:    {settings.trace.log_llm_prompt}")
+        
+    except Exception as e:
+        print(f"\n⚠️  Could not load configuration: {e}")
+        print("   (This is normal if running outside the project directory)")
+    
+    print("=" * 80)
     
     # Create tester
     tester = LoadTester(
@@ -439,6 +545,7 @@ async def main():
         image_url=args.image_url,
         disable_cache=args.disable_cache,
         sign_secret=args.sign_secret,
+        language=args.language,
     )
     
     # Health check test
@@ -459,6 +566,7 @@ async def main():
         disable_cache=args.disable_cache,
         request_index=0,
         sign_secret=args.sign_secret,
+        language=args.language,
     )
     
     # Run appropriate test

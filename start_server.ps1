@@ -6,11 +6,35 @@ Write-Host "Starting ChatCoach API Server" -ForegroundColor Cyan
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host ""
 
+# Check if .venv exists, if not run uv sync
+if (-not (Test-Path ".venv")) {
+    Write-Host "Virtual environment not found. Running uv sync..." -ForegroundColor Yellow
+    $uvCommand = Get-Command uv -ErrorAction SilentlyContinue
+    if ($uvCommand) {
+        uv sync
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "✓ Virtual environment created successfully" -ForegroundColor Green
+        } else {
+            Write-Host "Error: Failed to create virtual environment" -ForegroundColor Red
+            Write-Host "Please run 'uv sync' manually" -ForegroundColor Yellow
+            exit 1
+        }
+    } else {
+        Write-Host "Error: uv is not installed" -ForegroundColor Red
+        Write-Host "Please install uv first: https://docs.astral.sh/uv/getting-started/installation/" -ForegroundColor Yellow
+        exit 1
+    }
+    Write-Host ""
+}
+
 # Activate virtual environment if it exists
 if (Test-Path ".venv\Scripts\Activate.ps1") {
     Write-Host "Activating virtual environment..." -ForegroundColor Yellow
     & .\.venv\Scripts\Activate.ps1
     Write-Host "✓ Virtual environment activated" -ForegroundColor Green
+} else {
+    Write-Host "Warning: Virtual environment activation script not found" -ForegroundColor Yellow
+    Write-Host "Continuing without virtual environment..." -ForegroundColor Yellow
 }
 
 # Check if uvicorn is installed (support both pip and uv)

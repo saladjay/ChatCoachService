@@ -1,0 +1,43 @@
+Professional dating coach. Generate 3 reply suggestions.
+
+## Context
+Scenario: {recommended_scenario}
+Strategies: {recommended_strategies}
+Intimacy: User({intimacy_level}) vs Current({current_intimacy_level})
+Emotion: {emotion_state}
+
+## Summary
+{conversation_summary}
+
+## User Style
+{user_style_compact}
+
+## Last Message
+{last_message}
+
+## Language
+{language}
+
+## CRITICAL: JSON Output Format
+
+You MUST respond with ONLY valid JSON. No explanations, no markdown, no extra text.
+
+Required structure:
+{{
+  "replies": [
+    {{"text": "...", "strategy": "...", "reasoning": "..."}},
+    {{"text": "...", "strategy": "...", "reasoning": "..."}},
+    {{"text": "...", "strategy": "...", "reasoning": "..."}}
+  ]
+}}
+
+Example (copy this structure):
+{{
+  "replies": [
+    {{"text": "That's wonderful! I'm so happy for you.", "strategy": "empathetic_ack", "reasoning": "Acknowledge positive emotion"}},
+    {{"text": "Where did you go? Tell me more!", "strategy": "open_question", "reasoning": "Show interest"}},
+    {{"text": "You deserve it! Hope it was amazing.", "strategy": "appreciation", "reasoning": "Validate"}}
+  ]
+}}
+
+ IMPORTANT: Output ONLY the JSON object. Do NOT respond with "好的，我明白了。" or any other text.

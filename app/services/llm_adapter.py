@@ -32,6 +32,17 @@ from llm_adapter import (
     LLMAdapterError,
     ConfigManager,
 )
+from llm_adapter.adapters.base import (
+    MultimodalContent,
+    ImageInput,
+    ImageInputType,
+)
+from llm_adapter.adapters import (
+    DashScopeAdapter,
+    OpenRouterAdapter,
+    GeminiAdapter,
+    OpenAIAdapter,
+)
 
 
 # Quality mapping: chatcoach quality -> over-seas-llm-platform-service quality
@@ -50,8 +61,34 @@ TASK_SCENE_MAP = {
     "strategy_planning": "system",
 }
 
-# 支持的平台列表
+# 支持的平台列�?
 SUPPORTED_PROVIDERS = ["openai", "gemini", "cloudflare", "huggingface", "dashscope", "openrouter"]
+
+# Provider name to adapter class mapping
+ADAPTER_CLASSES = {
+    "dashscope": DashScopeAdapter,
+    "openrouter": OpenRouterAdapter,
+    "gemini": GeminiAdapter,
+    "openai": OpenAIAdapter,
+}
+
+
+def _get_adapter_class(provider: str):
+    """Get adapter class for a provider.
+    
+    Args:
+        provider: Provider name
+        
+    Returns:
+        Adapter class
+        
+    Raises:
+        ValueError: If provider is not supported
+    """
+    adapter_class = ADAPTER_CLASSES.get(provider)
+    if not adapter_class:
+        raise ValueError(f"No adapter class found for provider: {provider}")
+    return adapter_class
 
 
 class LLMCall:
@@ -155,7 +192,7 @@ class LLMAdapterImpl(BaseLLMAdapter):
             the underlying adapter. This will be implemented when the
             over-seas-llm-platform-service supports max_tokens.
         """
-        # 如果指定了 provider 和 model，直接调用
+        # 如果指定�?provider �?model，直接调�?
         if llm_call.provider and llm_call.model:
             return await self.call_with_provider(
                 prompt=llm_call.prompt,
@@ -287,432 +324,353 @@ class LLMAdapterImpl(BaseLLMAdapter):
             Dictionary mapping tier names to model names
         """
         return self._adapter.get_provider_models(provider)
-
-
-class MultimodalLLMClient:
-    def __init__(self, config=None, config_path: str | None = None):
-        if config_path is None:
-            config_path = str(LLM_ADAPTER_PATH / "config.yaml")
-
-        self._config_manager = ConfigManager(config_path)
-        self._llm_adapter = OverSeasLLMAdapter(config_manager=self._config_manager)
-
-        self._provider: str | None = None
-        self._model: str | None = None
-
-        self._registered_providers: dict[str, Any] = {}
-
-        # Check for environment variable override
-        import os
-        env_multimodal_provider = os.environ.get("MULTIMODAL_DEFAULT_PROVIDER")
-        
-        if env_multimodal_provider:
-            # Environment variable specified, try to use it first
-            try:
-                provider_config = self._config_manager.get_provider_config(env_multimodal_provider)
-                multimodal_model = provider_config.models.multimodal
-                if multimodal_model:
-                    api_key = (provider_config.api_key or "").strip()
-                    if api_key or env_multimodal_provider == "gemini":  # Gemini vertex mode doesn't need API key
-                        self._provider = env_multimodal_provider
-                        self._model = multimodal_model
-                        import logging
-                        logger = logging.getLogger(__name__)
-                        logger.info(
-                            f"Using multimodal provider from environment variable: "
-                            f"{env_multimodal_provider} (model: {multimodal_model})"
-                        )
-            except Exception as e:
-                import logging
-                logger = logging.getLogger(__name__)
-                logger.warning(
-                    f"Failed to use MULTIMODAL_DEFAULT_PROVIDER={env_multimodal_provider}: {e}. "
-                    f"Falling back to default provider selection."
-                )
-        
-        # If not set by environment variable, use default logic
-        if not self._provider or not self._model:
-            try:
-                default_provider = self._config_manager.get_default_provider()
-            except Exception:
-                default_provider = "openrouter"
-
-            provider_priority = [default_provider, "gemini", "dashscope", "openrouter", "openai"]
-            seen: set[str] = set()
-            ordered_providers: list[str] = []
-            for p in provider_priority:
-                if p and p not in seen:
-                    ordered_providers.append(p)
-                    seen.add(p)
-
-            last_error: Exception | None = None
-            for provider_name in ordered_providers:
-                try:
-                    provider_config = self._config_manager.get_provider_config(provider_name)
-                    multimodal_model = provider_config.models.multimodal
-                    if not multimodal_model:
-                        continue
-
-                    api_key = (provider_config.api_key or "").strip()
-                    if not api_key and provider_name != "gemini":  # Gemini vertex mode doesn't need API key
-                        continue
-
-                    self._provider = provider_name
-                    self._model = multimodal_model
-                    break
-                except Exception as e:
-                    last_error = e
-                    continue
-
-            if last_error is not None and (not self._provider or not self._model):
-                raise RuntimeError(f"Failed to load multimodal configuration: {last_error}")
-
-        if not self._provider or not self._model:
-            raise RuntimeError(
-                "No multimodal model configured. Please configure a provider "
-                "with a 'multimodal' model and valid API key in core/llm_adapter/config.yaml"
-            )
-
-    def register_provider(self, name: str, provider: Any) -> None:
-        self._registered_providers[name] = provider
-
-    async def call(
+    
+    async def call_multimodal(
         self,
         prompt: str,
-        image_base64: str,
+        image_data: str,
+        image_type: Literal["url", "base64"] = "base64",
         provider: str | None = None,
-    ) -> MultimodalLLMResponse:
-        selected_provider = provider if provider else self._provider
-        selected_model = self._model
-
-        if provider and provider in self._registered_providers:
-            injected = self._registered_providers[provider]
-            try:
-                response_dict = await injected.call(
-                    prompt=prompt,
-                    image_base64=image_base64,
-                    provider=provider,
-                    model=selected_model,
-                )
-            except Exception as e:
-                raise RuntimeError(f"Vision API call failed: {e}")
-
-            try:
-                parsed_json = self._parse_json_response(response_dict["raw_text"])
-            except Exception as e:
-                raise RuntimeError(f"Failed to parse JSON from LLM response: {e}")
-
-            return MultimodalLLMResponse(
-                raw_text=response_dict["raw_text"],
-                parsed_json=parsed_json,
-                provider=response_dict.get("provider", provider),
-                model=response_dict.get("model", selected_model or ""),
-                input_tokens=response_dict.get("input_tokens", 0),
-                output_tokens=response_dict.get("output_tokens", 0),
-                cost_usd=response_dict.get("cost_usd", 0.0),
-            )
-
-        if provider and provider != self._provider:
-            try:
-                provider_config = self._config_manager.get_provider_config(provider)
-                multimodal_model = provider_config.models.multimodal
-                if not multimodal_model:
-                    raise RuntimeError(f"Provider '{provider}' has no multimodal model configured")
-                selected_model = multimodal_model
-            except Exception as e:
-                raise RuntimeError(f"Failed to get provider config: {e}")
-
-        try:
-            response_dict = await self._call_vision_api(
-                prompt=prompt,
-                image_base64=image_base64,
-                provider=selected_provider,
-                model=selected_model,
-            )
-        except Exception as e:
-            raise RuntimeError(f"Vision API call failed: {e}")
-
-        try:
-            parsed_json = self._parse_json_response(response_dict["raw_text"])
-        except ValueError as e:
-            raise RuntimeError(f"Failed to parse JSON from LLM response: {e}")
-
-        return MultimodalLLMResponse(
-            raw_text=response_dict["raw_text"],
-            parsed_json=parsed_json,
-            provider=response_dict["provider"],
-            model=response_dict["model"],
-            input_tokens=response_dict["input_tokens"],
-            output_tokens=response_dict["output_tokens"],
-            cost_usd=response_dict["cost_usd"],
-        )
-
-    async def _call_vision_api(
-        self,
-        prompt: str,
-        image_base64: str,
-        provider: str,
-        model: str,
-    ) -> dict:
-        # Special handling for Gemini provider
-        if provider == "gemini":
-            return await self._call_gemini_vision(prompt, image_base64, model)
+        model: str | None = None,
+        user_id: str = "system",
+        mime_type: str = "image/jpeg",
+    ) -> LLMResult:
+        """Make a multimodal LLM call with text and image.
         
-        # Default: OpenAI-compatible API
-        provider_config = self._config_manager.get_provider_config(provider)
-        api_key = provider_config.api_key
-        base_url = provider_config.base_url
-
-        if not base_url:
-            raise RuntimeError(f"Provider '{provider}' requires 'base_url' in configuration")
-
-        payload = {
-            "model": model,
-            "messages": [
-                {
-                    "role": "system",
-                    "content": prompt,
-                },
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "image_url",
-                            "image_url": {"url": f"data:image/jpeg;base64,{image_base64}"},
-                        }
-                    ],
-                },
-            ],
-            "max_tokens": 4096,
-            "temperature": 0.0,
-        }
-
-        headers = {
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        }
-
-        try:
-            async with httpx.AsyncClient(timeout=120.0) as client:
-                response = await client.post(
-                    f"{base_url}/chat/completions",
-                    headers=headers,
-                    json=payload,
+        This method supports two image input formats:
+        - URL: Provide image via URL (image_type="url")
+        - Base64: Provide image as base64-encoded string (image_type="base64")
+        
+        Args:
+            prompt: The text prompt to send to LLM
+            image_data: Image URL or base64-encoded string
+            image_type: Type of image input ("url" or "base64")
+            provider: Optional specific provider (e.g., 'dashscope', 'openrouter')
+            model: Optional specific model (required if provider is specified)
+            user_id: User ID for billing/logging
+            mime_type: MIME type of the image (e.g., "image/jpeg", "image/png")
+        
+        Returns:
+            LLMResult with generated text and metadata.
+        
+        Raises:
+            ValueError: If provider is not supported or doesn't support multimodal
+            LLMAdapterError: If the provider call fails
+        
+        Example:
+            # Using base64 image
+            result = await adapter.call_multimodal(
+                prompt="What's in this image?",
+                image_data=base64_string,
+                image_type="base64",
+                provider="dashscope",
+                model="qwen-vl-plus"
+            )
+            
+            # Using image URL
+            result = await adapter.call_multimodal(
+                prompt="Describe this image",
+                image_data="https://example.com/image.jpg",
+                image_type="url",
+                provider="openrouter",
+                model="openai/gpt-4o"
+            )
+        """
+        # Create ImageInput based on type
+        if image_type == "url":
+            image_input = ImageInput.from_url(image_data)
+        elif image_type == "base64":
+            image_input = ImageInput.from_base64(image_data, mime_type)
+        else:
+            raise ValueError(f"Invalid image_type: {image_type}. Must be 'url' or 'base64'")
+        
+        # Create MultimodalContent
+        content = MultimodalContent(
+            text=prompt,
+            images=[image_input]
+        )
+        
+        # If provider and model are specified, use them directly
+        if provider and model:
+            if provider not in SUPPORTED_PROVIDERS:
+                raise ValueError(
+                    f"Unsupported provider: {provider}. "
+                    f"Supported providers: {SUPPORTED_PROVIDERS}"
                 )
-                response.raise_for_status()
-                data = response.json()
-        except httpx.TimeoutException as e:
-            raise RuntimeError(f"Request timed out: {e}")
-        except httpx.HTTPStatusError as e:
-            error_detail = ""
+            
+            # Get the provider adapter
+            provider_config = self._adapter.config_manager.get_provider_config(provider)
+            adapter_class = _get_adapter_class(provider)
+            
+            # Create adapter instance with config
+            adapter_kwargs = {
+                "api_key": provider_config.api_key,
+            }
+            
+            # Add provider-specific config
+            if hasattr(provider_config, 'base_url') and provider_config.base_url:
+                adapter_kwargs['base_url'] = provider_config.base_url
+            if hasattr(provider_config, 'mode') and provider_config.mode:
+                adapter_kwargs['mode'] = provider_config.mode
+            if hasattr(provider_config, 'project_id') and provider_config.project_id:
+                adapter_kwargs['project_id'] = provider_config.project_id
+            if hasattr(provider_config, 'location') and provider_config.location:
+                adapter_kwargs['location'] = provider_config.location
+            
+            adapter = adapter_class(**adapter_kwargs)
+            
             try:
-                error_data = e.response.json()
-                error_detail = error_data.get("error", {}).get("message", e.response.text)
-            except Exception:
-                error_detail = e.response.text
-            raise RuntimeError(f"API error: {error_detail}")
-        except Exception as e:
-            raise RuntimeError(f"Unexpected error: {e}")
-
-        try:
-            raw_text = data["choices"][0]["message"]["content"]
-        except (KeyError, IndexError) as e:
-            raise RuntimeError(f"Unexpected response format: {e}")
-
-        usage = data.get("usage", {})
-        input_tokens = usage.get("prompt_tokens", 0)
-        output_tokens = usage.get("completion_tokens", 0)
-
-        cost_usd = usage.get("total_cost") or usage.get("cost")
-        if cost_usd is None:
-            try:
-                cost_usd = self._llm_adapter.billing.calculate_cost(
+                # Call multimodal generation
+                raw_result = await adapter.generate_multimodal(content, model)
+                
+                # Calculate cost if not provided
+                cost_usd = raw_result.cost_usd
+                if cost_usd is None and raw_result.input_tokens and raw_result.output_tokens:
+                    try:
+                        cost_usd = self._adapter.billing.calculate_cost(
+                            provider=provider,
+                            model=model,
+                            input_tokens=raw_result.input_tokens,
+                            output_tokens=raw_result.output_tokens,
+                        )
+                    except Exception:
+                        cost_usd = 0.0
+                
+                return LLMResult(
+                    text=raw_result.text,
                     provider=provider,
                     model=model,
-                    input_tokens=input_tokens,
-                    output_tokens=output_tokens,
+                    input_tokens=raw_result.input_tokens or 0,
+                    output_tokens=raw_result.output_tokens or 0,
+                    cost_usd=cost_usd or 0.0,
+                )
+            finally:
+                await adapter.aclose()
+        
+        # Otherwise, use default multimodal provider
+        # Check if quality routing is disabled
+        import os
+        disable_routing = os.environ.get("LLM_DISABLE_QUALITY_ROUTING", "").lower() == "true"
+        
+        if disable_routing:
+            # Use default provider only, no fallback
+            try:
+                default_provider = self._adapter.config_manager.get_default_provider()
+                provider_config = self._adapter.config_manager.get_provider_config(default_provider)
+                multimodal_model = provider_config.models.multimodal
+                
+                if not multimodal_model:
+                    raise RuntimeError(
+                        f"Default provider '{default_provider}' has no multimodal model configured. "
+                        f"Please configure a multimodal model for '{default_provider}' in config.yaml"
+                    )
+                
+                # Check API key
+                api_key = (provider_config.api_key or "").strip()
+                if not api_key and default_provider != "gemini":
+                    raise RuntimeError(f"Default provider '{default_provider}' has no API key configured")
+                
+                # Use default provider
+                return await self.call_multimodal(
+                    prompt=prompt,
+                    image_data=image_data,
+                    image_type=image_type,
+                    provider=default_provider,
+                    model=multimodal_model,
+                    user_id=user_id,
+                    mime_type=mime_type,
+                )
+            except Exception as e:
+                raise RuntimeError(
+                    f"Failed to use default provider '{default_provider}' for multimodal (routing disabled): {str(e)}"
+                )
+        
+        # Quality routing enabled - try multiple providers
+        multimodal_providers = ["openrouter", "dashscope", "gemini", "openai"]
+        
+        errors = []  # Collect errors for debugging
+        
+        for provider_name in multimodal_providers:
+            try:
+                provider_config = self._adapter.config_manager.get_provider_config(provider_name)
+                multimodal_model = provider_config.models.multimodal
+                
+                if not multimodal_model:
+                    errors.append(f"{provider_name}: No multimodal model configured")
+                    continue
+                
+                # Check if provider has API key (except Gemini vertex mode)
+                api_key = (provider_config.api_key or "").strip()
+                if not api_key and provider_name != "gemini":
+                    errors.append(f"{provider_name}: No API key configured")
+                    continue
+                
+                # For Gemini, check if it's vertex mode
+                if provider_name == "gemini" and not api_key:
+                    if not (hasattr(provider_config, 'mode') and provider_config.mode == 'vertex'):
+                        errors.append(f"{provider_name}: No API key and not in vertex mode")
+                        continue
+                
+                # Found a valid provider, use it
+                return await self.call_multimodal(
+                    prompt=prompt,
+                    image_data=image_data,
+                    image_type=image_type,
+                    provider=provider_name,
+                    model=multimodal_model,
+                    user_id=user_id,
+                    mime_type=mime_type,
+                )
+            except Exception as e:
+                errors.append(f"{provider_name}: {str(e)}")
+                continue
+        
+        # All providers failed, provide detailed error message
+        error_details = "\n".join(f"  - {err}" for err in errors)
+        raise RuntimeError(
+            f"No multimodal provider available. Tried all providers:\n{error_details}\n\n"
+            "Please configure a provider with a 'multimodal' model and valid API key "
+            "in core/llm_adapter/config.yaml"
+        )
+    
+    async def call_multimodal_with_multiple_images(
+        self,
+        prompt: str,
+        images: list[tuple[str, Literal["url", "base64"]]],
+        provider: str | None = None,
+        model: str | None = None,
+        user_id: str = "system",
+        mime_type: str = "image/jpeg",
+    ) -> LLMResult:
+        """Make a multimodal LLM call with text and multiple images.
+        
+        Args:
+            prompt: The text prompt to send to LLM
+            images: List of (image_data, image_type) tuples
+            provider: Optional specific provider
+            model: Optional specific model
+            user_id: User ID for billing/logging
+            mime_type: MIME type of the images
+        
+        Returns:
+            LLMResult with generated text and metadata.
+        
+        Example:
+            result = await adapter.call_multimodal_with_multiple_images(
+                prompt="Compare these images",
+                images=[
+                    (base64_string1, "base64"),
+                    ("https://example.com/image2.jpg", "url"),
+                ],
+                provider="openrouter",
+                model="openai/gpt-4o"
+            )
+        """
+        # Create ImageInput list
+        image_inputs = []
+        for image_data, image_type in images:
+            if image_type == "url":
+                image_inputs.append(ImageInput.from_url(image_data))
+            elif image_type == "base64":
+                image_inputs.append(ImageInput.from_base64(image_data, mime_type))
+            else:
+                raise ValueError(f"Invalid image_type: {image_type}. Must be 'url' or 'base64'")
+        
+        # Create MultimodalContent
+        content = MultimodalContent(
+            text=prompt,
+            images=image_inputs
+        )
+        
+        # If provider and model are specified, use them directly
+        if provider and model:
+            if provider not in SUPPORTED_PROVIDERS:
+                raise ValueError(
+                    f"Unsupported provider: {provider}. "
+                    f"Supported providers: {SUPPORTED_PROVIDERS}"
+                )
+            
+            # Get the provider adapter
+            provider_config = self._adapter.config_manager.get_provider_config(provider)
+            adapter_class = _get_adapter_class(provider)
+            
+            # Create adapter instance with config
+            adapter_kwargs = {
+                "api_key": provider_config.api_key,
+            }
+            
+            # Add provider-specific config
+            if hasattr(provider_config, 'base_url') and provider_config.base_url:
+                adapter_kwargs['base_url'] = provider_config.base_url
+            if hasattr(provider_config, 'mode') and provider_config.mode:
+                adapter_kwargs['mode'] = provider_config.mode
+            if hasattr(provider_config, 'project_id') and provider_config.project_id:
+                adapter_kwargs['project_id'] = provider_config.project_id
+            if hasattr(provider_config, 'location') and provider_config.location:
+                adapter_kwargs['location'] = provider_config.location
+            
+            adapter = adapter_class(**adapter_kwargs)
+            
+            try:
+                # Call multimodal generation
+                raw_result = await adapter.generate_multimodal(content, model)
+                
+                # Calculate cost if not provided
+                cost_usd = raw_result.cost_usd
+                if cost_usd is None and raw_result.input_tokens and raw_result.output_tokens:
+                    try:
+                        cost_usd = self._adapter.billing.calculate_cost(
+                            provider=provider,
+                            model=model,
+                            input_tokens=raw_result.input_tokens,
+                            output_tokens=raw_result.output_tokens,
+                        )
+                    except Exception:
+                        cost_usd = 0.0
+                
+                return LLMResult(
+                    text=raw_result.text,
+                    provider=provider,
+                    model=model,
+                    input_tokens=raw_result.input_tokens or 0,
+                    output_tokens=raw_result.output_tokens or 0,
+                    cost_usd=cost_usd or 0.0,
+                )
+            finally:
+                await adapter.aclose()
+        
+        # Otherwise, use default multimodal provider
+        multimodal_providers = ["openrouter", "dashscope", "gemini", "openai"]
+        
+        for provider_name in multimodal_providers:
+            try:
+                provider_config = self._adapter.config_manager.get_provider_config(provider_name)
+                multimodal_model = provider_config.models.multimodal
+                
+                if not multimodal_model:
+                    continue
+                
+                # Check if provider has API key (except Gemini vertex mode)
+                api_key = (provider_config.api_key or "").strip()
+                if not api_key and provider_name != "gemini":
+                    continue
+                
+                # Found a valid provider, use it
+                return await self.call_multimodal_with_multiple_images(
+                    prompt=prompt,
+                    images=images,
+                    provider=provider_name,
+                    model=multimodal_model,
+                    user_id=user_id,
+                    mime_type=mime_type,
                 )
             except Exception:
-                cost_usd = 0.0
-        else:
-            cost_usd = float(cost_usd)
-
-        return {
-            "raw_text": raw_text,
-            "provider": provider,
-            "model": model,
-            "input_tokens": input_tokens,
-            "output_tokens": output_tokens,
-            "cost_usd": cost_usd,
-        }
-
-    async def _call_gemini_vision(
-        self,
-        prompt: str,
-        image_base64: str,
-        model: str,
-    ) -> dict:
-        """Call Gemini vision API using GeminiAdapter with SDK/Vertex support."""
-        from llm_adapter.adapters import GeminiAdapter
-        
-        provider_config = self._config_manager.get_provider_config("gemini")
-        
-        # Build adapter kwargs
-        kwargs = {}
-        if hasattr(provider_config, 'mode') and provider_config.mode:
-            kwargs['mode'] = provider_config.mode
-        if hasattr(provider_config, 'project_id') and provider_config.project_id:
-            kwargs['project_id'] = provider_config.project_id
-        if hasattr(provider_config, 'location') and provider_config.location:
-            kwargs['location'] = provider_config.location
-        
-        # Create Gemini adapter
-        adapter = GeminiAdapter(api_key=provider_config.api_key, **kwargs)
-        
-        try:
-            # Gemini multimodal format: combine prompt and image in a single message
-            # Format: "prompt\n\n[Image data as base64]"
-            multimodal_prompt = f"{prompt}\n\nImage: data:image/jpeg;base64,{image_base64}"
-            
-            # For Gemini SDK/Vertex, we need to use their native multimodal format
-            if kwargs.get('mode') in ['sdk', 'vertex']:
-                result = await self._call_gemini_native_multimodal(
-                    adapter, prompt, image_base64, model, kwargs.get('mode')
-                )
-            else:
-                # HTTP mode - use text-only for now (Gemini HTTP multimodal needs different implementation)
-                result = await adapter.generate(multimodal_prompt, model)
-            
-            # Calculate cost
-            cost_usd = 0.0
-            if result.input_tokens and result.output_tokens:
-                try:
-                    cost_usd = self._llm_adapter.billing.calculate_cost(
-                        provider="gemini",
-                        model=model,
-                        input_tokens=result.input_tokens,
-                        output_tokens=result.output_tokens,
-                    )
-                except Exception:
-                    cost_usd = 0.0
-            
-            return {
-                "raw_text": result.text,
-                "provider": "gemini",
-                "model": model,
-                "input_tokens": result.input_tokens or 0,
-                "output_tokens": result.output_tokens or 0,
-                "cost_usd": cost_usd,
-            }
-        finally:
-            await adapter.aclose()
-
-    async def _call_gemini_native_multimodal(
-        self,
-        adapter,
-        prompt: str,
-        image_base64: str,
-        model: str,
-        mode: str,
-    ) -> Any:
-        """Call Gemini SDK/Vertex with native multimodal support."""
-        import asyncio
-        import base64
-        
-        # Decode base64 image
-        image_bytes = base64.b64decode(image_base64)
-        
-        if mode == 'sdk':
-            # Use google-generativeai SDK
-            def _sync_generate():
-                from PIL import Image
-                import io
-                
-                # Convert bytes to PIL Image
-                image = Image.open(io.BytesIO(image_bytes))
-                
-                # Call SDK with image
-                gen_model = adapter._genai.GenerativeModel(model)
-                return gen_model.generate_content([prompt, image])
-            
-            loop = asyncio.get_event_loop()
-            response = await loop.run_in_executor(None, _sync_generate)
-            
-            # Extract token usage
-            input_tokens = None
-            output_tokens = None
-            if hasattr(response, 'usage_metadata') and response.usage_metadata:
-                input_tokens = getattr(response.usage_metadata, 'prompt_token_count', None)
-                output_tokens = getattr(response.usage_metadata, 'candidates_token_count', None)
-            
-            # Create result object
-            class Result:
-                def __init__(self, text, input_tokens, output_tokens):
-                    self.text = text
-                    self.input_tokens = input_tokens
-                    self.output_tokens = output_tokens
-            
-            return Result(response.text, input_tokens, output_tokens)
-        
-        elif mode == 'vertex':
-            # Use Vertex AI SDK
-            def _sync_generate():
-                from vertexai.generative_models import GenerativeModel, Part
-                
-                # Create image part
-                image_part = Part.from_data(image_bytes, mime_type="image/jpeg")
-                
-                # Get or create model
-                vertex_model = adapter._get_vertex_model(model)
-                
-                # Call with prompt and image
-                return vertex_model.generate_content([prompt, image_part])
-            
-            loop = asyncio.get_event_loop()
-            response = await loop.run_in_executor(None, _sync_generate)
-            
-            # Extract token usage
-            input_tokens = None
-            output_tokens = None
-            if hasattr(response, 'usage_metadata') and response.usage_metadata:
-                input_tokens = getattr(response.usage_metadata, 'prompt_token_count', None)
-                output_tokens = getattr(response.usage_metadata, 'candidates_token_count', None)
-            
-            # Create result object
-            class Result:
-                def __init__(self, text, input_tokens, output_tokens):
-                    self.text = text
-                    self.input_tokens = input_tokens
-                    self.output_tokens = output_tokens
-            
-            return Result(response.text, input_tokens, output_tokens)
-        
-        else:
-            raise RuntimeError(f"Unsupported Gemini mode: {mode}")
-
-    def _parse_json_response(self, raw_text: str) -> dict:
-        try:
-            return json.loads(raw_text)
-        except json.JSONDecodeError:
-            pass
-
-        code_block_pattern = r"```(?:json)?\s*\n?(.*?)\n?```"
-        matches = re.findall(code_block_pattern, raw_text, re.DOTALL)
-        for match in matches:
-            try:
-                return json.loads(match.strip())
-            except json.JSONDecodeError:
                 continue
-
-        json_pattern = r"\{.*\}"
-        matches = re.findall(json_pattern, raw_text, re.DOTALL)
-        for match in matches:
-            try:
-                return json.loads(match)
-            except json.JSONDecodeError:
-                continue
-
-        raise ValueError(f"Could not extract valid JSON from response: {raw_text[:200]}...")
+        
+        raise RuntimeError(
+            "No multimodal provider available. Please configure a provider "
+            "with a 'multimodal' model in core/llm_adapter/config.yaml"
+        )
 
 
 
