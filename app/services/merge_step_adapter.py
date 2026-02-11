@@ -365,10 +365,10 @@ class MergeStepAdapter:
         - risk_flags: Default empty list if missing
         - current_scenario: Default empty string if missing
         - recommended_scenario: Default "SAFE" if missing
-        - recommended_strategies: Always empty (filled by StrategySelector)
+        - recommended_strategies: Always empty (will be filled by Orchestrator._ensure_three_strategies)
         
-        Note: recommended_strategies will be empty and should be filled by
-        StrategySelector based on recommended_scenario.
+        Note: recommended_strategies will be empty and MUST be filled by
+        Orchestrator._ensure_three_strategies() to ensure exactly 3 strategies.
         
         Args:
             merge_output: The full merge_step JSON output
@@ -429,7 +429,7 @@ class MergeStepAdapter:
             risk_flags=risk_flags,
             current_scenario=current_scenario,
             recommended_scenario=recommended_scenario,
-            recommended_strategies=[],  # Will be filled by StrategySelector
+            recommended_strategies=[],  # Will be filled by Orchestrator._ensure_three_strategies()
         )
     
     @staticmethod
