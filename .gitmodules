@@ -1,13 +1,11 @@
 [submodule "core/llm_adapter"]
 	path = core/llm_adapter
 	url = git@gitlab.zhizitech.org:ai/llmadapter.git
-[submodule "core/user_profile"]
-	path = core/user_profile
-	url = git@gitlab.zhizitech.org:ai/chatcoachuserprofile.git
 [submodule "core/moderation-service"]
 	path = core/moderation-service
 	url = git@gitlab.zhizitech.org:ai/content-review-service.git
 	branch = main
-[submodule "core/screenshotanalysis"]
-	path = core/screenshotanalysis
-	url = git@gitlab.zhizitech.org:ai/screenshotanalysis.git
+[submodule "core/chatcoachuserprofile"]
+	path = core/chatcoachuserprofile
+	url = git@gitlab.zhizitech.org:ai/chatcoachuserprofile.git
+	branch = main

@@ -11,6 +11,7 @@ Usage:
 import argparse
 import json
 import sys
+from collections import defaultdict
 from pathlib import Path
 from typing import List, Dict
 
@@ -52,6 +53,8 @@ def extract_llm_calls(entries: List[Dict]) -> List[Dict]:
     llm_calls = []
     prompts_by_call_id = {}
     versions_by_call_id = {}
+    callers_by_call_id = {}
+    prompts_by_step_id = {}
     
     # First pass: collect prompts and versions from llm_call_start events
     for entry in entries:
@@ -60,6 +63,15 @@ def extract_llm_calls(entries: List[Dict]) -> List[Dict]:
             if call_id:
                 prompts_by_call_id[call_id] = entry.get("prompt", "")
                 versions_by_call_id[call_id] = entry.get("prompt_version")
+                callers_by_call_id[call_id] = {
+                    "caller_module": entry.get("caller_module"),
+                    "caller_func": entry.get("caller_func"),
+                }
+        # Also collect from step_start events (screenshot parser)
+        elif entry.get("type") == "step_start":
+            step_id = entry.get("step_id")
+            if step_id:
+                prompts_by_step_id[step_id] = entry.get("prompt", "")
     
     # Second pass: collect results from llm_call_end events
     for entry in entries:
@@ -67,12 +79,15 @@ def extract_llm_calls(entries: List[Dict]) -> List[Dict]:
             call_id = entry.get("call_id")
             prompt = prompts_by_call_id.get(call_id, "")
             prompt_version = versions_by_call_id.get(call_id) or entry.get("prompt_version")
+            caller_info = callers_by_call_id.get(call_id) or {}
+            caller_module = entry.get("caller_module") or caller_info.get("caller_module")
+            caller_func = entry.get("caller_func") or caller_info.get("caller_func")
             
             llm_calls.append({
                 "timestamp": entry.get("ts"),
-                "task_type": entry.get("task_type"),
-                "provider": entry.get("provider"),
-                "model": entry.get("model"),
+                "task_type": entry.get("task_type") or "unknown",
+                "provider": entry.get("provider") or "unknown",
+                "model": entry.get("model") or "unknown",
                 "input_tokens": entry.get("input_tokens", 0),
                 "output_tokens": entry.get("output_tokens", 0),
                 "total_tokens": entry.get("input_tokens", 0) + entry.get("output_tokens", 0),
@@ -80,18 +95,144 @@ def extract_llm_calls(entries: List[Dict]) -> List[Dict]:
                 "latency_ms": entry.get("duration_ms", 0),
                 "prompt": prompt,
                 "prompt_version": prompt_version,
+                "caller_module": caller_module,
+                "caller_func": caller_func,
                 "response": entry.get("text", "")
             })
+        # Also collect from step_end events (screenshot parser and other DIRECT LLM-based steps)
+        # IMPORTANT: Only include step_end if it has LLM metadata at TOP LEVEL
+        # Do NOT include step_end with LLM metadata in 'result' field, as those are wrappers
+        # around llm_call_end events and would cause double counting
+        elif entry.get("type") == "step_end":
+            # Check if this step_end contains DIRECT LLM call information (top level only)
+            has_direct_llm_metadata = (
+                entry.get("provider") or 
+                entry.get("model") or 
+                entry.get("input_tokens") or 
+                entry.get("output_tokens") or 
+                entry.get("cost_usd")
+            )
+            
+            # Only add if this is a DIRECT LLM call (not a wrapper)
+            # Examples of direct LLM calls: merge_step_llm (has top-level metadata)
+            # Examples of wrappers: reply_generation_attempt_1 (metadata in result field)
+            if has_direct_llm_metadata:
+                step_id = entry.get("step_id")
+                prompt = prompts_by_step_id.get(step_id, "")
+                
+                # Get metadata from top level
+                provider = entry.get("provider") or "unknown"
+                model = entry.get("model") or "unknown"
+                input_tokens = entry.get("input_tokens", 0)
+                output_tokens = entry.get("output_tokens", 0)
+                cost_usd = entry.get("cost_usd", 0.0)
+                
+                # Infer task_type from step_name if not provided
+                task_type = entry.get("task_type")
+                if not task_type:
+                    step_name = entry.get("step_name", "")
+                    if "merge_step" in step_name:
+                        task_type = "merge_step"
+                    elif "reply_generation" in step_name or "generation" in step_name:
+                        task_type = "generation"
+                    elif "scene" in step_name:
+                        task_type = "scene"
+                    elif "persona" in step_name:
+                        task_type = "persona"
+                    elif "context" in step_name:
+                        task_type = "context"
+                    else:
+                        task_type = "unknown"
+                
+                llm_calls.append({
+                    "timestamp": entry.get("ts"),
+                    "task_type": task_type,
+                    "provider": provider,
+                    "model": model,
+                    "input_tokens": input_tokens,
+                    "output_tokens": output_tokens,
+                    "total_tokens": input_tokens + output_tokens,
+                    "cost_usd": cost_usd,
+                    "latency_ms": entry.get("duration_ms", 0),
+                    "prompt": prompt,
+                    "prompt_version": None,
+                    "caller_module": entry.get("step_name") or "unknown",
+                    "caller_func": None,
+                    "response": ""
+                })
     
     return llm_calls
 
 
-def print_summary(llm_calls: List[Dict], title: str = "TRACE ANALYSIS"):
+def _percentile(values: List[float], p: float) -> float:
+    if not values:
+        return 0.0
+    if p <= 0:
+        return float(min(values))
+    if p >= 100:
+        return float(max(values))
+    ordered = sorted(values)
+    k = (len(ordered) - 1) * (p / 100.0)
+    f = int(k)
+    c = min(f + 1, len(ordered) - 1)
+    if f == c:
+        return float(ordered[f])
+    d0 = ordered[f] * (c - k)
+    d1 = ordered[c] * (k - f)
+    return float(d0 + d1)
+
+
+def print_latency_summary(llm_calls: List[Dict], group_key: str = "task_type"):
+    grouped: dict[str, List[float]] = defaultdict(list)
+    for call in llm_calls:
+        latency = call.get("latency_ms") or 0
+        if latency <= 0:
+            continue
+        k = call.get(group_key) or "unknown"
+        grouped[str(k)].append(float(latency))
+
+    if not grouped:
+        return
+
+    rows = []
+    for k, latencies in grouped.items():
+        rows.append(
+            {
+                "key": k,
+                "count": len(latencies),
+                "mean": sum(latencies) / len(latencies),
+                "p50": _percentile(latencies, 50),
+                "p90": _percentile(latencies, 90),
+                "min": min(latencies),
+                "max": max(latencies),
+            }
+        )
+
+    rows.sort(key=lambda r: (-(r["mean"] or 0), r["key"]))
+
+    print(f"\nLATENCY SUMMARY BY {group_key.upper()}")
+    print("-" * 80)
+    print(f"{'Type':<28} {'N':>6} {'Mean(ms)':>10} {'P50':>10} {'P90':>10} {'Min':>10} {'Max':>10}")
+    print("-" * 80)
+    for r in rows:
+        print(
+            f"{r['key'][:28]:<28}"
+            f" {r['count']:>6}"
+            f" {r['mean']:>10.0f}"
+            f" {r['p50']:>10.0f}"
+            f" {r['p90']:>10.0f}"
+            f" {r['min']:>10.0f}"
+            f" {r['max']:>10.0f}"
+        )
+
+
+def print_summary(llm_calls: List[Dict], title: str = "TRACE ANALYSIS", latency_group: str = "task_type"):
     """Print summary of LLM calls.
     
     Args:
         llm_calls: List of LLM call entries
         title: Title for the summary
+        latency_group: Group key for latency aggregation
     """
     print("\n" + "="*80)
     print(title)
@@ -125,6 +266,8 @@ def print_summary(llm_calls: List[Dict], title: str = "TRACE ANALYSIS"):
         print(f"{i:<4} {call['task_type']:<20} {call['model']:<20} "
               f"{call['input_tokens']:<8} {call['output_tokens']:<8} "
               f"{call['total_tokens']:<8} ${call['cost_usd']:<11.6f}")
+
+    print_latency_summary(llm_calls, group_key=latency_group)
 
 
 def print_detailed_call(call: Dict, call_num: int):
@@ -285,6 +428,12 @@ def main():
         action="store_true",
         help="Show detailed information for each LLM call"
     )
+    parser.add_argument(
+        "--latency-group",
+        default="task_type",
+        choices=["task_type", "caller_module", "prompt_version", "provider", "model"],
+        help="Group key for latency aggregation (default: task_type)"
+    )
     
     args = parser.parse_args()
     
@@ -303,8 +452,8 @@ def main():
         optimized_calls = extract_llm_calls(optimized_entries)
         
         # Print summaries
-        print_summary(baseline_calls, "BASELINE TRACE ANALYSIS")
-        print_summary(optimized_calls, "OPTIMIZED TRACE ANALYSIS")
+        print_summary(baseline_calls, "BASELINE TRACE ANALYSIS", latency_group=args.latency_group)
+        print_summary(optimized_calls, "OPTIMIZED TRACE ANALYSIS", latency_group=args.latency_group)
         
         # Compare
         compare_traces(baseline_calls, optimized_calls)
@@ -330,7 +479,7 @@ def main():
             entries = load_trace_file(trace_file)
             llm_calls = extract_llm_calls(entries)
             
-            print_summary(llm_calls, f"TRACE ANALYSIS: {trace_file}")
+            print_summary(llm_calls, f"TRACE ANALYSIS: {trace_file}", latency_group=args.latency_group)
             
             if args.detailed:
                 for i, call in enumerate(llm_calls, 1):

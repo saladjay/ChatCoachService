@@ -6,11 +6,35 @@ Write-Host "Starting ChatCoach API Server" -ForegroundColor Cyan
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host ""
 
+# Check if .venv exists, if not run uv sync
+if (-not (Test-Path ".venv")) {
+    Write-Host "Virtual environment not found. Running uv sync..." -ForegroundColor Yellow
+    $uvCommand = Get-Command uv -ErrorAction SilentlyContinue
+    if ($uvCommand) {
+        uv sync
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "✓ Virtual environment created successfully" -ForegroundColor Green
+        } else {
+            Write-Host "Error: Failed to create virtual environment" -ForegroundColor Red
+            Write-Host "Please run 'uv sync' manually" -ForegroundColor Yellow
+            exit 1
+        }
+    } else {
+        Write-Host "Error: uv is not installed" -ForegroundColor Red
+        Write-Host "Please install uv first: https://docs.astral.sh/uv/getting-started/installation/" -ForegroundColor Yellow
+        exit 1
+    }
+    Write-Host ""
+}
+
 # Activate virtual environment if it exists
 if (Test-Path ".venv\Scripts\Activate.ps1") {
     Write-Host "Activating virtual environment..." -ForegroundColor Yellow
     & .\.venv\Scripts\Activate.ps1
     Write-Host "✓ Virtual environment activated" -ForegroundColor Green
+} else {
+    Write-Host "Warning: Virtual environment activation script not found" -ForegroundColor Yellow
+    Write-Host "Continuing without virtual environment..." -ForegroundColor Yellow
 }
 
 # Check if uvicorn is installed (support both pip and uv)
@@ -23,6 +47,38 @@ if ($LASTEXITCODE -ne 0 -or -not $uvicornCheck) {
     exit 1
 }
 Write-Host "✓ uvicorn is installed" -ForegroundColor Green
+
+# Check and start Redis
+Write-Host "Checking Redis..." -ForegroundColor Yellow
+$redisCliPath = Get-Command redis-cli -ErrorAction SilentlyContinue
+if ($redisCliPath) {
+    $redisPing = redis-cli ping 2>$null
+    if ($redisPing -eq "PONG") {
+        Write-Host "✓ Redis is already running" -ForegroundColor Green
+    } else {
+        Write-Host "Starting Redis server..." -ForegroundColor Yellow
+        $redisServerPath = Get-Command redis-server -ErrorAction SilentlyContinue
+        if ($redisServerPath) {
+            # Start Redis in background
+            Start-Process -FilePath "redis-server" -ArgumentList "--port 6379" -WindowStyle Hidden
+            Start-Sleep -Seconds 2
+            $redisPing = redis-cli ping 2>$null
+            if ($redisPing -eq "PONG") {
+                Write-Host "✓ Redis started successfully" -ForegroundColor Green
+            } else {
+                Write-Host "Warning: Failed to start Redis" -ForegroundColor Yellow
+                Write-Host "Please start Redis manually: redis-server" -ForegroundColor Yellow
+            }
+        } else {
+            Write-Host "Warning: redis-server not found" -ForegroundColor Yellow
+            Write-Host "Please install Redis or start it manually" -ForegroundColor Yellow
+        }
+    }
+} else {
+    Write-Host "Warning: Redis not found" -ForegroundColor Yellow
+    Write-Host "Please install Redis from: https://github.com/microsoftarchive/redis/releases" -ForegroundColor Yellow
+    Write-Host "Or use WSL/Docker to run Redis" -ForegroundColor Yellow
+}
 
 # Check if .env file exists
 if (-not (Test-Path ".env")) {

@@ -48,6 +48,12 @@ class PromptAssembler:
         self.include_reasoning = include_reasoning  # Phase 3
         self._prompt_manager = get_prompt_manager()
 
+    def _format_prompt_template(self, template: str, values: dict[str, object]) -> str:
+        escaped = template.replace("{", "{{").replace("}", "}}")
+        for key in values.keys():
+            escaped = escaped.replace("{{" + str(key) + "}}", "{" + str(key) + "}")
+        return escaped.format(**values)
+
     def _display_speaker(self, speaker: Any) -> str:
         s = str(speaker or "").strip()
         if not s:
@@ -109,58 +115,77 @@ class PromptAssembler:
             last_message = get_last_message(context.conversation)
             
             if self.use_compact_v2:
-                prompt_version = (
-                    PromptVersion.V3_1_COMPACT_V2_WITH_REASONING
-                    if self.include_reasoning
-                    else PromptVersion.V3_2_COMPACT_V2_WITHOUT_REASONING
-                )
-                prompt_template = self._prompt_manager.get_prompt_version(
-                    PromptType.REPLY_GENERATION,
-                    prompt_version,
-                )
-                prompt_template = (prompt_template or "").strip()
-                # Phase 3: Build output schema instruction based on reasoning control
+                active_prompt_template = self._prompt_manager.get_active_prompt(PromptType.REPLY_GENERATION)
+                active_prompt_template = (active_prompt_template or "").strip()
+
+                using_active_template = bool(active_prompt_template)
+                if using_active_template:
+                    prompt_template = active_prompt_template
+                else:
+                    prompt_version = (
+                        PromptVersion.V3_1_COMPACT_V2_WITH_REASONING
+                        if self.include_reasoning
+                        else PromptVersion.V3_2_COMPACT_V2_WITHOUT_REASONING
+                    )
+                    prompt_template = self._prompt_manager.get_prompt_version(
+                        PromptType.REPLY_GENERATION,
+                        prompt_version,
+                    )
+                    prompt_template = (prompt_template or "").strip()
+
                 output_instruction = self._build_output_schema_instruction(
                     include_reasoning=self.include_reasoning
                 )
                 
-                # 精简 V2：使用紧凑输出格式（最优化）
-                base_prompt = prompt_template.format(
-                    recommended_scenario=recommended_scenario,
-                    recommended_strategies=recommended_strategies,
-                    intimacy_level=f"{intimacy_level_label}({intimacy_level})",
-                    current_intimacy_level=f"{current_intimacy_level_label}({current_intimacy_level})",
-                    emotion_state=emotion_state,
-                    conversation_summary=conversation_summary,
-                    user_style_compact=user_style_compact,
-                    last_message=last_message,
-                    language=language,
+                base_prompt = self._format_prompt_template(
+                    prompt_template,
+                    {
+                        "recommended_scenario": recommended_scenario,
+                        "recommended_strategies": recommended_strategies,
+                        "intimacy_level": f"{intimacy_level_label}({intimacy_level})",
+                        "current_intimacy_level": f"{current_intimacy_level_label}({current_intimacy_level})",
+                        "emotion_state": emotion_state,
+                        "conversation_summary": conversation_summary,
+                        "user_style_compact": user_style_compact,
+                        "last_message": last_message,
+                        "language": language,
+                    },
                 )
-                
-                # Phase 3: Add length constraint and output schema instruction
-                # Add prompt version identifier
+                if using_active_template:
+                    return f"[PROMPT:reply_generation_active]\n{base_prompt}"
                 version_suffix = "with_reasoning" if self.include_reasoning else "no_reasoning"
                 return f"[PROMPT:reply_generation_compact_v2_{version_suffix}]\n{base_prompt}\n\nLength Constraint: {length_guidance}\n\n{output_instruction}"
             else:
-                prompt_template = self._prompt_manager.get_prompt_version(
-                    PromptType.REPLY_GENERATION,
-                    PromptVersion.V2_COMPACT,
+                active_prompt_template = self._prompt_manager.get_active_prompt(PromptType.REPLY_GENERATION)
+                active_prompt_template = (active_prompt_template or "").strip()
+
+                using_active_template = bool(active_prompt_template)
+                if using_active_template:
+                    prompt_template = active_prompt_template
+                else:
+                    prompt_template = self._prompt_manager.get_prompt_version(
+                        PromptType.REPLY_GENERATION,
+                        PromptVersion.V2_COMPACT,
+                    )
+                    prompt_template = (prompt_template or "").strip()
+                base_prompt = self._format_prompt_template(
+                    prompt_template,
+                    {
+                        "recommended_scenario": recommended_scenario,
+                        "recommended_strategies": recommended_strategies,
+                        "intimacy_level": f"{intimacy_level_label}({intimacy_level})",
+                        "current_intimacy_level": f"{current_intimacy_level_label}({current_intimacy_level})",
+                        "emotion_state": emotion_state,
+                        "conversation_summary": conversation_summary,
+                        "user_style_compact": user_style_compact,
+                        "last_message": last_message,
+                        "language": language,
+                    },
                 )
-                prompt_template = (prompt_template or "").strip()
-                # 精简 V1：减少 40-50% tokens
-                base_prompt = prompt_template.format(
-                    recommended_scenario=recommended_scenario,
-                    recommended_strategies=recommended_strategies,
-                    intimacy_level=f"{intimacy_level_label}({intimacy_level})",
-                    current_intimacy_level=f"{current_intimacy_level_label}({current_intimacy_level})",
-                    emotion_state=emotion_state,
-                    conversation_summary=conversation_summary,
-                    user_style_compact=user_style_compact,
-                    last_message=last_message,
-                    language=language,
-                )
-                
-                # Phase 3: Add length constraint
+
+                if using_active_template:
+                    return f"[PROMPT:reply_generation_active]\n{base_prompt}"
+
                 return f"[PROMPT:reply_generation_compact_v1]\n{base_prompt}\n\nLength Constraint: {length_guidance}"
         else:
             logger.info(f"use full prompt for reply")
@@ -193,32 +218,76 @@ class PromptAssembler:
 
             policy_block = await self._compile_policy_block(input.user_id, context.conversation)
 
+            logger.info("="*60)
+            logger.info("PromptAssembler: Determining reply_sentence (Last Message)")
+            
             reply_sentence = getattr(input, "reply_sentence", "")
+            logger.info(f"  - Input reply_sentence: '{reply_sentence}'")
+            
             if not isinstance(reply_sentence, str) or not reply_sentence.strip():
-                reply_sentence = self._infer_reply_sentence(context.conversation)
+                logger.info(f"  - Input reply_sentence is empty, inferring from conversation")
+                # 从 request 中获取 explicit_reply_sentence（如果有）
+                explicit_reply_sentence = ""
+                if hasattr(input, "request") and hasattr(input.request, "reply_sentence"):
+                    explicit_reply_sentence = input.request.reply_sentence
+                    logger.info(f"  - Explicit reply_sentence from request: '{explicit_reply_sentence}'")
+                
+                reply_sentence = self._infer_reply_sentence(context.conversation, explicit_reply_sentence)
+            
+            logger.info(f"  - Final reply_sentence (Last Message): '{reply_sentence}'")
+            logger.info("="*60)
 
             prompt_template = self._prompt_manager.get_active_prompt(PromptType.REPLY_GENERATION)
             prompt_template = (prompt_template or "").strip()
-            base_prompt = prompt_template.format(
-                scenario=scenario,
-                current_intimacy_level=f"{current_intimacy_level_label}({current_intimacy_level})",
-                intimacy_level=f"{intimacy_level_label}({intimacy_level})",
-                emotion_state=emotion_state,
-                conversation=conversation,
-                conversation_summary=conversation_summary,
-                persona_snapshot_prompt=persona_snapshot_prompt,
-                policy_block=policy_block,
-                reply_sentence=reply_sentence,
-                language=language,
-                recommended_strategies=recommended_strategies,
-                current_scenario=current_scenario,
-                recommended_scenario=recommended_scenario,
+            base_prompt = self._format_prompt_template(
+                prompt_template,
+                {
+                    "scenario": scenario,
+                    "current_intimacy_level": f"{current_intimacy_level_label}({current_intimacy_level})",
+                    "intimacy_level": f"{intimacy_level_label}({intimacy_level})",
+                    "emotion_state": emotion_state,
+                    "conversation": conversation,
+                    "conversation_summary": conversation_summary,
+                    "persona_snapshot_prompt": persona_snapshot_prompt,
+                    "policy_block": policy_block,
+                    "reply_sentence": reply_sentence,
+                    "language": language,
+                    "recommended_strategies": recommended_strategies,
+                    "current_scenario": current_scenario,
+                    "recommended_scenario": recommended_scenario,
+                },
             )
             
             return f"[PROMPT:reply_generation_full_v1]\n{base_prompt}"
 
-    def _infer_reply_sentence(self, messages: list[Any]) -> str:
+    def _infer_reply_sentence(self, messages: list[Any], explicit_reply_sentence: str = "") -> str:
+        """
+        推断 reply_sentence（Last Message）。
+        
+        优先级：
+        1. 如果提供了 explicit_reply_sentence，直接使用
+        2. 否则，使用原有逻辑（从后往前找第一个非 user 的消息）
+        
+        Args:
+            messages: 对话消息列表
+            explicit_reply_sentence: 明确指定的 reply_sentence（可选）
+        
+        Returns:
+            推断出的 reply_sentence
+        """
+        logger.info("  _infer_reply_sentence called:")
+        logger.info(f"    - Explicit reply_sentence provided: {bool(explicit_reply_sentence)}")
+        
+        # 优先使用明确指定的 reply_sentence
+        if explicit_reply_sentence and explicit_reply_sentence.strip():
+            logger.info(f"    - Using explicit reply_sentence: '{explicit_reply_sentence}'")
+            return explicit_reply_sentence.strip()
+        
+        logger.info(f"    - No explicit reply_sentence, inferring from {len(messages)} messages")
+        
+        # 原有逻辑（后备方案）
         if not messages:
+            logger.info(f"    - No messages available, returning empty string")
             return ""
 
         def _get(msg: Any) -> tuple[str, str]:
@@ -230,7 +299,7 @@ class PromptAssembler:
                 content = str(msg.get("content", ""))
             return speaker, content
 
-        user_speakers = {"user", "用户", "我", "me"}
+        user_speakers = {"user", "用户", "我", "me", "right"}  # 添加 "right"
 
         for msg in reversed(messages):
             speaker, content = _get(msg)
@@ -239,13 +308,19 @@ class PromptAssembler:
             text = content.strip()
             if not text:
                 continue
-            if str(speaker).strip() not in user_speakers:
+            if str(speaker).strip().lower() not in user_speakers:
+                logger.info(f"    - Found non-user message (speaker='{speaker}'): '{text}'")
                 return text
 
         for msg in reversed(messages):
             _, content = _get(msg)
             if isinstance(content, str) and content.strip():
+                logger.info(f"    - Fallback: using last message: '{content.strip()}'")
                 return content.strip()
+        
+        logger.info(f"    - No reply_sentence found, returning empty string")
+        return ""
+        logger.warning("No reply_sentence found")
         return ""
 
     async def _compile_policy_block(self, user_id: str, messages: list[Any] | None = None) -> str:

@@ -88,6 +88,16 @@
         "version": "v3.2-compact_v2_no_reasoning",
         "version_id": "reply_generation_compact_v2_no_reasoning",
         "created_at": "2026-01-27T23:34:18.956382"
+      },
+      {
+        "prompt_id": "reply_generation_v3.3",
+        "version": "v3.3",
+        "created_at": "2026-02-02T17:55:19.459099"
+      },
+      {
+        "prompt_id": "reply_generation_v3.3",
+        "version": "v3.3",
+        "created_at": "2026-02-10T19:36:47.563427"
       }
     ],
     "trait_discovery": [
@@ -148,18 +158,44 @@
         "prompt_id": "intimacy_check_v2.0-compact",
         "version": "v2.0-compact",
         "created_at": "2026-01-22T16:00:00.000000"
+    "merge_step": [
+      {
+        "prompt_id": "merge_step_v1.0-original",
+        "version": "v1.0-original",
+        "created_at": "2026-02-05T00:00:00"
+      },
+      {
+        "prompt_id": "merge_step_v2.0-compact",
+        "version": "v2.0-compact",
+        "created_at": "2026-02-09T15:10:58.768924"
+      },
+      {
+        "prompt_id": "merge_step_v2.0-compact",
+        "version": "v2.0-compact",
+        "created_at": "2026-02-09T15:11:43.171837"
+      },
+      {
+        "prompt_id": "merge_step_v2.0-compact",
+        "version": "v2.0-compact",
+        "created_at": "2026-02-09T15:22:30.935676"
+      },
+      {
+        "prompt_id": "merge_step_v3.0-compact",
+        "version": "v3.0-compact",
+        "created_at": "2026-02-10T15:10:37.467980"
       }
     ]
   },
   "active_versions": {
     "scenario_analysis": "scenario_analysis_v2.0-compact",
     "context_summary": "context_summary_v3.0-compact",
-    "reply_generation": "reply_generation_v2.0-compact",
+    "reply_generation": "reply_generation_v3.3",
     "trait_discovery": "trait_discovery_v1.0-original",
     "trait_mapping": "trait_mapping_v1.0-original",
     "screenshot_parse": "screenshot_parse_v2.0-compact",
     "strategy_planning": "strategy_planning_v2.0-compact",
     "intimacy_check": "intimacy_check_v2.0-compact"
+    "merge_step": "merge_step_v3.0-compact"
   },
   "version_history": [
     {
@@ -364,6 +400,84 @@
       "prompt_id": "context_summary_v3.0-compact",
       "action": "activate",
       "timestamp": "2026-01-29T17:24:16.529975",
+      "author": "cli_user"
+    },
+    {
+      "prompt_id": "reply_generation_v3.3",
+      "action": "register",
+      "timestamp": "2026-02-02T17:55:19.459736",
+      "author": "cli_user"
+    },
+    {
+      "prompt_id": "reply_generation_v3.3",
+      "action": "activate",
+      "timestamp": "2026-02-02T17:55:19.474943",
+      "author": "cli_user"
+    },
+    {
+      "prompt_id": "merge_step_v1.0-original",
+      "action": "register",
+      "timestamp": "2026-02-05T00:00:00",
+      "author": "system"
+    },
+    {
+      "prompt_id": "merge_step_v2.0-compact",
+      "action": "register",
+      "timestamp": "2026-02-09T15:10:58.769443",
+      "author": "cli_user"
+    },
+    {
+      "prompt_id": "merge_step_v2.0-compact",
+      "action": "activate",
+      "timestamp": "2026-02-09T15:10:58.777695",
+      "author": "cli_user"
+    },
+    {
+      "prompt_id": "merge_step_v2.0-compact",
+      "action": "register",
+      "timestamp": "2026-02-09T15:11:43.172362",
+      "author": "cli_user"
+    },
+    {
+      "prompt_id": "merge_step_v2.0-compact",
+      "action": "activate",
+      "timestamp": "2026-02-09T15:11:43.181825",
+      "author": "cli_user"
+    },
+    {
+      "prompt_id": "merge_step_v2.0-compact",
+      "action": "register",
+      "timestamp": "2026-02-09T15:22:30.936099",
+      "author": "cli_user"
+    },
+    {
+      "prompt_id": "merge_step_v2.0-compact",
+      "action": "activate",
+      "timestamp": "2026-02-09T15:22:30.945945",
+      "author": "cli_user"
+    },
+    {
+      "prompt_id": "merge_step_v3.0-compact",
+      "action": "register",
+      "timestamp": "2026-02-10T15:10:37.468567",
+      "author": "cli_user"
+    },
+    {
+      "prompt_id": "merge_step_v3.0-compact",
+      "action": "activate",
+      "timestamp": "2026-02-10T15:10:37.485716",
+      "author": "cli_user"
+    },
+    {
+      "prompt_id": "reply_generation_v3.3",
+      "action": "register",
+      "timestamp": "2026-02-10T19:36:47.563876",
+      "author": "cli_user"
+    },
+    {
+      "prompt_id": "reply_generation_v3.3",
+      "action": "activate",
+      "timestamp": "2026-02-10T19:36:47.582532",
       "author": "cli_user"
     }
   ]

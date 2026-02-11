@@ -3,9 +3,13 @@
 This module provides the main ScreenshotParserService class that orchestrates
 the screenshot parsing workflow by coordinating image fetching, prompt building,
 LLM invocation, and result normalization.
+
+VERSION: 2.0 - Updated logging to show bubbles instead of messages
 """
 
 import logging
+import time
+import uuid
 from typing import Any
 
 from app.models.screenshot import (
@@ -16,9 +20,10 @@ from app.models.screenshot import (
     ImageMeta,
 )
 from app.services.image_fetcher import ImageFetcher
-from app.services.llm_adapter import MultimodalLLMClient
+from app.services.llm_adapter import LLMAdapterImpl
 from app.services.prompt_manager import PromptManager, PromptType
 from app.services.result_normalizer import ResultNormalizer
+from app.observability.trace_logger import trace_logger
 
 
 logger = logging.getLogger(__name__)
@@ -49,7 +54,7 @@ class ScreenshotParserService:
         self,
         image_fetcher: ImageFetcher,
         prompt_manager: PromptManager,
-        llm_client: MultimodalLLMClient,
+        llm_adapter: LLMAdapterImpl,
         result_normalizer: ResultNormalizer,
     ):
         """Initialize the screenshot parser service.
@@ -57,13 +62,478 @@ class ScreenshotParserService:
         Args:
             image_fetcher: Component for downloading and processing images
             prompt_manager: Prompt version manager for loading active prompts
-            llm_client: Component for calling multimodal LLM APIs
+            llm_adapter: LLM adapter for calling multimodal LLM APIs
             result_normalizer: Component for validating and normalizing output
         """
         self.image_fetcher = image_fetcher
         self.prompt_manager = prompt_manager
-        self.llm_client = llm_client
+        self.llm_adapter = llm_adapter
         self.result_normalizer = result_normalizer
+
+    def _log_merge_step_conversation(
+        self,
+        session_id: str,
+        strategy: str,
+        model: str,
+        parsed_json: dict
+    ) -> None:
+        """Log extracted conversation details from merge_step analysis.
+        
+        Args:
+            session_id: Session ID for logging
+            strategy: Strategy name (multimodal/premium)
+            model: Model name
+            parsed_json: Parsed JSON response
+        """
+        try:
+            # Extract bubbles from screenshot_parse section
+            screenshot_parse = parsed_json.get("screenshot_parse", {})
+            bubbles = screenshot_parse.get("bubbles", [])
+            participants = screenshot_parse.get("participants", {})
+            
+            # Log participants info
+            self_info = participants.get("self", {})
+            other_info = participants.get("other", {})
+            user_nickname = self_info.get("nickname", "Unknown")
+            target_nickname = other_info.get("nickname", "Unknown")
+            
+            logger.info(
+                f"[{session_id}] merge_step [{strategy}|{model}] Participants: "
+                f"User='{user_nickname}', Target='{target_nickname}'"
+            )
+            
+            # Sort bubbles by y-coordinate (top to bottom)
+            sorted_bubbles = sorted(bubbles, key=lambda b: b.get("bbox", {}).get("y1", 0))
+            
+            # Get layout info to understand role mapping
+            screenshot_parse = parsed_json.get("screenshot_parse", {})
+            layout = screenshot_parse.get("layout", {})
+            left_role = layout.get("left_role", "unknown")
+            right_role = layout.get("right_role", "unknown")
+            
+            # Log bubble details with layout context
+            logger.info(
+                f"[{session_id}] RACE [{strategy}|{model}] Layout: left={left_role}, right={right_role}"
+            )
+            logger.info(
+                f"[{session_id}] RACE [{strategy}|{model}] Extracted {len(sorted_bubbles)} bubbles (sorted top->bottom):"
+            )
+            
+            for idx, bubble in enumerate(sorted_bubbles, 1):
+                sender = bubble.get("sender", "unknown")
+                text = bubble.get("text", "")
+                column = bubble.get("column", "unknown")
+                bbox = bubble.get("bbox", {})
+                x1 = bbox.get("x1", 0)
+                y1 = bbox.get("y1", 0)
+                x2 = bbox.get("x2", 0)
+                y2 = bbox.get("y2", 0)
+                
+                # Show expected role based on layout
+                expected_role = left_role if column == "left" else right_role
+                role_match = "OK" if sender == expected_role else "MISMATCH"
+                
+                # Truncate long messages for readability (keep emoji in content)
+                display_text = text[:100] + "..." if len(text) > 100 else text
+                
+                logger.info(
+                    f"[{session_id}]   [{idx}] {sender}({column}) {role_match} "
+                    f"bbox=[{x1},{y1},{x2},{y2}]: {display_text}"
+                )
+                
+        except Exception as e:
+            logger.warning(f"[{session_id}] Failed to log merge_step conversation: {e}", exc_info=True)
+
+    def _log_screenshot_dialogs(
+        self,
+        session_id: str,
+        strategy: str,
+        model: str,
+        parsed_json: dict
+    ) -> None:
+        """Log extracted dialogs from screenshot parsing.
+        
+        Args:
+            session_id: Session ID for logging
+            strategy: Strategy name (multimodal/premium)
+            model: Model name
+            parsed_json: Parsed JSON response
+        """
+        try:
+            dialogs = parsed_json.get("dialogs", [])
+            participants = parsed_json.get("participants", {})
+            
+            # Log participants info
+            user_nickname = participants.get("user", {}).get("nickname", "Unknown")
+            target_nickname = participants.get("target", {}).get("nickname", "Unknown")
+            
+            logger.info(
+                f"[{session_id}] screenshot_parse [{strategy}|{model}] Participants: "
+                f"User='{user_nickname}', Target='{target_nickname}'"
+            )
+            
+            # Log dialog details
+            logger.info(
+                f"[{session_id}] screenshot_parse [{strategy}|{model}] Extracted {len(dialogs)} dialogs:"
+            )
+            
+            for idx, dialog in enumerate(dialogs, 1):
+                speaker = dialog.get("speaker", "unknown")
+                text = dialog.get("text", "")
+                position = dialog.get("position", "unknown")
+                
+                # Truncate long messages for readability
+                display_text = text[:100] + "..." if len(text) > 100 else text
+                
+                logger.info(
+                    f"[{session_id}]   [{idx}] {speaker} ({position}): {display_text}"
+                )
+                
+        except Exception as e:
+            logger.warning(f"[{session_id}] Failed to log screenshot dialogs: {e}")
+
+    def _repair_merge_step_bubble_bboxes(
+        self,
+        parsed_json: dict,
+        image_width: int,
+        image_height: int,
+    ) -> None:
+        screenshot_data = parsed_json.get("screenshot_parse")
+        if not isinstance(screenshot_data, dict):
+            return
+
+        bubbles = screenshot_data.get("bubbles")
+        if not isinstance(bubbles, list) or not bubbles:
+            return
+
+        for bubble in bubbles:
+            if not isinstance(bubble, dict):
+                continue
+
+            bbox_data = bubble.get("bbox")
+            if not isinstance(bbox_data, dict):
+                bubble["bbox"] = {"x1": 0.0, "y1": 0.0, "x2": 0.0, "y2": 0.0}
+                continue
+
+            try:
+                x1_raw = float(bbox_data.get("x1", 0))
+                y1_raw = float(bbox_data.get("y1", 0))
+                x2_raw = float(bbox_data.get("x2", 0))
+                y2_raw = float(bbox_data.get("y2", 0))
+            except Exception:
+                x1_raw = y1_raw = x2_raw = y2_raw = 0.0
+
+            x1 = min(x1_raw, x2_raw)
+            x2 = max(x1_raw, x2_raw)
+            y1 = min(y1_raw, y2_raw)
+            y2 = max(y1_raw, y2_raw)
+
+            if (x1 > 1.0 or y1 > 1.0 or x2 > 1.0 or y2 > 1.0) and image_width > 0 and image_height > 0:
+                x1 /= image_width
+                x2 /= image_width
+                y1 /= image_height
+                y2 /= image_height
+
+            x1 = max(0.0, min(1.0, x1))
+            y1 = max(0.0, min(1.0, y1))
+            x2 = max(0.0, min(1.0, x2))
+            y2 = max(0.0, min(1.0, y2))
+
+            bubble["bbox"] = {
+                "x1": x1,
+                "y1": y1,
+                "x2": x2,
+                "y2": y2,
+            }
+
+    async def _race_multimodal_calls(
+        self,
+        prompt: str,
+        image_data: str,
+        image_type: str,
+        mime_type: str,
+        user_id: str,
+        session_id: str,
+        provider: str,
+        validator: callable,
+        task_name: str = "multimodal_race",
+    ) -> tuple[str, Any, Any]:
+        """
+        Race two multimodal LLM calls with premium priority.
+        
+        Strategy:
+        1. Always wait for both models to complete
+        2. Prefer premium result if available (higher quality)
+        3. Fall back to multimodal if premium fails
+        4. Return both results for caching purposes
+        
+        This method simultaneously calls:
+        1. Default multimodal model (fast, lower quality)
+        2. Premium model (slower, higher quality)
+        
+        Args:
+            prompt: Text prompt for LLM
+            image_data: Image URL or base64 string
+            image_type: "url" or "base64"
+            mime_type: Image MIME type (e.g., "image/jpeg")
+            user_id: User ID for billing/logging
+            session_id: Session ID for logging
+            provider: Provider name (e.g., "openrouter")
+            validator: Function to validate parsed JSON result
+            task_name: Name for logging (e.g., "screenshot_parse")
+            
+        Returns:
+            Tuple of (winning_strategy, winning_result, premium_result_or_none)
+            - winning_strategy: "premium" or "multimodal"
+            - winning_result: The result to use for current response
+            - premium_result_or_none: Premium result for caching (None if failed)
+            
+        Raises:
+            ValueError: If both calls fail or return invalid data
+        """
+        import asyncio
+        
+        # Define async function for multimodal call
+        async def call_multimodal_llm():
+            step_id = uuid.uuid4().hex
+            start_time = time.time()
+            
+            trace_logger.log_event({
+                "level": "debug",
+                "type": "step_start",
+                "step_id": step_id,
+                "step_name": f"{task_name}_multimodal",
+                "task_type": task_name,
+                "session_id": session_id,
+                "user_id": user_id,
+            })
+            
+            try:
+                result = await self.llm_adapter.call_multimodal(
+                    prompt=prompt,
+                    image_data=image_data,
+                    image_type=image_type,
+                    mime_type=mime_type,
+                    user_id=user_id,
+                )
+                
+                duration_ms = int((time.time() - start_time) * 1000)
+                trace_logger.log_event({
+                    "level": "debug",
+                    "type": "step_end",
+                    "step_id": step_id,
+                    "step_name": f"{task_name}_multimodal",
+                    "session_id": session_id,
+                    "duration_ms": duration_ms,
+                    "provider": result.provider,
+                    "model": result.model,
+                    "status": "success",
+                })
+                
+                logger.info(
+                    f"[{session_id}] {task_name} multimodal completed in {duration_ms}ms "
+                    f"(model: {result.model})"
+                )
+                return ("multimodal", result)
+                
+            except Exception as e:
+                duration_ms = int((time.time() - start_time) * 1000)
+                trace_logger.log_event({
+                    "level": "error",
+                    "type": "step_end",
+                    "step_id": step_id,
+                    "step_name": f"{task_name}_multimodal",
+                    "session_id": session_id,
+                    "duration_ms": duration_ms,
+                    "status": "error",
+                    "error": str(e),
+                })
+                logger.warning(f"[{session_id}] {task_name} multimodal failed: {e}")
+                return ("multimodal", None)
+        
+        # Define async function for premium call
+        async def call_premium_llm():
+            step_id = uuid.uuid4().hex
+            start_time = time.time()
+            
+            trace_logger.log_event({
+                "level": "debug",
+                "type": "step_start",
+                "step_id": step_id,
+                "step_name": f"{task_name}_premium",
+                "task_type": task_name,
+                "session_id": session_id,
+                "user_id": user_id,
+            })
+            
+            try:
+                result = await self.llm_adapter.call_multimodal(
+                    prompt=prompt,
+                    image_data=image_data,
+                    image_type=image_type,
+                    mime_type=mime_type,
+                    user_id=user_id,
+                    provider=provider,
+                    model="google/gemini-2.0-flash-001",
+                )
+                
+                duration_ms = int((time.time() - start_time) * 1000)
+                trace_logger.log_event({
+                    "level": "debug",
+                    "type": "step_end",
+                    "step_id": step_id,
+                    "step_name": f"{task_name}_premium",
+                    "session_id": session_id,
+                    "duration_ms": duration_ms,
+                    "provider": result.provider,
+                    "model": result.model,
+                    "status": "success",
+                })
+                
+                logger.info(
+                    f"[{session_id}] {task_name} premium completed in {duration_ms}ms "
+                    f"(model: {result.model})"
+                )
+                return ("premium", result)
+                
+            except Exception as e:
+                duration_ms = int((time.time() - start_time) * 1000)
+                trace_logger.log_event({
+                    "level": "error",
+                    "type": "step_end",
+                    "step_id": step_id,
+                    "step_name": f"{task_name}_premium",
+                    "session_id": session_id,
+                    "duration_ms": duration_ms,
+                    "status": "error",
+                    "error": str(e),
+                })
+                logger.warning(f"[{session_id}] {task_name} premium failed: {e}")
+                return ("premium", None)
+        
+        # Start both tasks simultaneously
+        logger.info(f"[{session_id}] Starting {task_name} race: multimodal vs premium (fast response, premium cache)")
+        multimodal_task = asyncio.create_task(call_multimodal_llm())
+        premium_task = asyncio.create_task(call_premium_llm())
+        
+        # Get debug settings
+        from app.core.config import settings
+        log_race = settings.debug_config.log_race_strategy
+        
+        import json
+        from app.api.v1.predict import parse_json_with_markdown
+        
+        # Wait for first valid result for immediate response
+        pending = {multimodal_task, premium_task}
+        multimodal_result = None
+        premium_result = None
+        multimodal_valid = False
+        premium_valid = False
+        winning_result = None
+        winning_strategy = None
+        
+        # Phase 1: Wait for first valid result (fast response)
+        while pending and winning_result is None:
+            done, pending = await asyncio.wait(
+                pending,
+                return_when=asyncio.FIRST_COMPLETED
+            )
+            
+            for task in done:
+                strategy, result = await task
+                
+                if strategy == "multimodal":
+                    multimodal_result = result
+                    if result:
+                        try:
+                            multimodal_parsed = parse_json_with_markdown(result.text)
+                            multimodal_valid = validator(multimodal_parsed)
+                            
+                            if log_race:
+                                logger.info(
+                                    f"[{session_id}] {task_name}: multimodal returned JSON with keys: "
+                                    f"{list(multimodal_parsed.keys()) if isinstance(multimodal_parsed, dict) else type(multimodal_parsed)}"
+                                )
+                            
+                            # Log extracted data based on debug settings
+                            if task_name == "merge_step" and settings.debug_config.log_merge_step_extraction:
+                                self._log_merge_step_conversation(
+                                    session_id=session_id,
+                                    strategy="multimodal",
+                                    model=result.model,
+                                    parsed_json=multimodal_parsed
+                                )
+                            elif task_name == "screenshot_parse" and settings.debug_config.log_screenshot_parse:
+                                self._log_screenshot_dialogs(
+                                    session_id=session_id,
+                                    strategy="multimodal",
+                                    model=result.model,
+                                    parsed_json=multimodal_parsed
+                                )
+                            
+                            if multimodal_valid:
+                                logger.info(f"[{session_id}] {task_name}: multimodal result is valid")
+                                # Set as winner and return immediately
+                                winning_result = result
+                                winning_strategy = "multimodal"
+                                # Break out of loop to return immediately
+                            else:
+                                logger.warning(f"[{session_id}] {task_name}: multimodal result is invalid")
+                        except (json.JSONDecodeError, KeyError) as e:
+                            logger.warning(f"[{session_id}] {task_name}: multimodal bad JSON: {e}")
+                
+                elif strategy == "premium":
+                    premium_result = result
+                    if result:
+                        try:
+                            premium_parsed = parse_json_with_markdown(result.text)
+                            premium_valid = validator(premium_parsed)
+                            
+                            if log_race:
+                                logger.info(
+                                    f"[{session_id}] {task_name}: premium returned JSON with keys: "
+                                    f"{list(premium_parsed.keys()) if isinstance(premium_parsed, dict) else type(premium_parsed)}"
+                                )
+                            
+                            # Log extracted data based on debug settings
+                            if task_name == "merge_step" and settings.debug_config.log_merge_step_extraction:
+                                self._log_merge_step_conversation(
+                                    session_id=session_id,
+                                    strategy="premium",
+                                    model=result.model,
+                                    parsed_json=premium_parsed
+                                )
+                            elif task_name == "screenshot_parse" and settings.debug_config.log_screenshot_parse:
+                                self._log_screenshot_dialogs(
+                                    session_id=session_id,
+                                    strategy="premium",
+                                    model=result.model,
+                                    parsed_json=premium_parsed
+                                )
+                            
+                            if premium_valid:
+                                logger.info(f"[{session_id}] {task_name}: premium result is valid")
+                                # Premium is valid, use it
+                                winning_result = result
+                                winning_strategy = "premium"
+                                # Break out of loop to return immediately
+                            else:
+                                logger.warning(f"[{session_id}] {task_name}: premium result is invalid")
+                        except (json.JSONDecodeError, KeyError) as e:
+                            logger.warning(f"[{session_id}] {task_name}: premium bad JSON: {e}")
+        
+        # Check if we have a winner
+        if winning_result is None:
+            # Both completed but neither is valid
+            logger.error(f"[{session_id}] {task_name}: Both multimodal and premium failed or returned invalid results")
+            raise ValueError(f"Both calls failed or returned invalid data for {task_name}")
+        
+        # We have a winner! Return immediately for fast response
+        logger.info(f"[{session_id}] {task_name}: Using {winning_strategy} result for immediate response")
+        
+        # Return the winning result along with premium task/result for background caching
+        # If premium hasn't completed yet, return the task; otherwise return the result
+        return (winning_strategy, winning_result, premium_task if premium_result is None else premium_result)
 
     async def parse_screenshot(
         self,
@@ -94,12 +564,31 @@ class ScreenshotParserService:
             logger.info(
                 f"[{session_id}] Fetching image from URL: {request.image_url}"
             )
+            
+            # Get image format configuration
+            from app.core.config import settings
+            image_format = settings.llm.multimodal_image_format
+            
             try:
-                fetched_image = await self.image_fetcher.fetch_image(request.image_url)
+                # Fetch image (compress based on configuration)
+                # When using URL format, compression is skipped by default
+                # When using base64 format, compression depends on LLM_MULTIMODAL_IMAGE_COMPRESS setting
+                if image_format == "url":
+                    # URL format: Never compress (LLM downloads directly)
+                    compress = False
+                else:
+                    # Base64 format: Use configuration setting
+                    compress = settings.llm.multimodal_image_compress
+                
+                fetched_image = await self.image_fetcher.fetch_image(
+                    request.image_url,
+                    compress=compress
+                )
                 logger.info(
                     f"[{session_id}] Image fetched successfully: "
                     f"{fetched_image.width}x{fetched_image.height} "
-                    f"({fetched_image.format})"
+                    f"({fetched_image.format}), transport format: {image_format}, "
+                    f"compressed: {compress}"
                 )
             except ValueError as e:
                 logger.error(f"[{session_id}] Image fetch failed: {e}")
@@ -126,22 +615,77 @@ class ScreenshotParserService:
                     session_id=session_id,
                 )
             
-            # Step 3: Call multimodal LLM (error code 1002, 1003)
-            logger.info(f"[{session_id}] Calling multimodal LLM")
+            # Step 3: Call multimodal LLM with race strategy (error code 1002, 1003)
+            logger.info(f"[{session_id}] Starting LLM race: multimodal vs premium")
+            
+            llm_start_time = time.time()
+            
+            # Prepare image data based on configuration
+            if image_format == "url":
+                image_data = request.image_url
+                image_type = "url"
+                logger.info(f"[{session_id}] Using URL format for LLM calls")
+            else:
+                image_data = fetched_image.base64_data
+                image_type = "base64"
+                logger.info(f"[{session_id}] Using base64 format for LLM calls")
+            
+            # Define validator for screenshot parse results
+            def validate_screenshot_result(parsed_json: dict) -> bool:
+                """Check if result has valid dialogs."""
+                dialogs = parsed_json.get("dialogs", [])
+                is_valid = dialogs and len(dialogs) > 0
+                if is_valid:
+                    logger.info(f"[{session_id}] Found {len(dialogs)} dialogs")
+                return is_valid
+            
             try:
-                llm_response = await self.llm_client.call(
+                from app.core.config import settings
+                
+                winning_strategy, llm_result = await self._race_multimodal_calls(
                     prompt=prompt,
-                    image_base64=fetched_image.base64_data,
+                    image_data=image_data,
+                    image_type=image_type,
+                    mime_type=f"image/{fetched_image.format.lower()}",
+                    user_id=session_id,
+                    session_id=session_id,
+                    provider=settings.llm.default_provider,
+                    validator=validate_screenshot_result,
+                    task_name="screenshot_parse",
                 )
+                
+                llm_duration_ms = int((time.time() - llm_start_time) * 1000)
+                
                 logger.info(
-                    f"[{session_id}] LLM call successful: "
-                    f"provider={llm_response.provider}, "
-                    f"model={llm_response.model}, "
-                    f"tokens={llm_response.input_tokens}+{llm_response.output_tokens}, "
-                    f"cost=${llm_response.cost_usd:.4f}"
+                    f"[{session_id}] Race done: {winning_strategy} won in {llm_duration_ms}ms, "
+                    f"provider={llm_result.provider}, model={llm_result.model}, "
+                    f"tokens={llm_result.input_tokens}+{llm_result.output_tokens}, "
+                    f"cost=${llm_result.cost_usd:.4f}"
+                )
+                
+                # Parse JSON from LLM response text (already validated in race)
+                import json
+                try:
+                    parsed_json = json.loads(llm_result.text)
+                except json.JSONDecodeError as json_err:
+                    # Try to extract JSON from markdown code blocks or other formats
+                    parsed_json = self._parse_json_response(llm_result.text)
+                
+            except ValueError as e:
+                # This catches the "Both calls failed" error from race strategy
+                llm_duration_ms = int((time.time() - llm_start_time) * 1000)
+                error_msg = str(e)
+                
+                logger.error(f"[{session_id}] LLM race failed: {e}")
+                return self._create_error_response(
+                    code=1002,
+                    message=f"LLM API call failed: {error_msg}",
+                    session_id=session_id,
                 )
             except RuntimeError as e:
+                llm_duration_ms = int((time.time() - llm_start_time) * 1000)
                 error_msg = str(e)
+                
                 # Determine if it's a JSON parsing error (1003) or LLM call error (1002)
                 if "parse" in error_msg.lower() or "json" in error_msg.lower():
                     logger.error(f"[{session_id}] JSON parsing failed: {e}")
@@ -158,6 +702,21 @@ class ScreenshotParserService:
                         session_id=session_id,
                     )
             except Exception as e:
+                llm_duration_ms = int((time.time() - llm_start_time) * 1000)
+                
+                # Log unexpected error with trace
+                trace_logger.log_event({
+                    "level": "error",
+                    "type": "step_error",
+                    "step_id": step_id,
+                    "step_name": "screenshot_parse_llm",
+                    "task_type": "screenshot_parse",
+                    "session_id": session_id,
+                    "duration_ms": llm_duration_ms,
+                    "error": str(e),
+                    "status": "failed",
+                })
+                
                 logger.error(f"[{session_id}] Unexpected LLM error: {e}")
                 return self._create_error_response(
                     code=1002,
@@ -172,9 +731,14 @@ class ScreenshotParserService:
                     width=fetched_image.width,
                     height=fetched_image.height
                 )
-                logger.info(f"llm response: {llm_response.parsed_json}")
+                logger.info(f"llm response: {parsed_json}")
+                self._repair_merge_step_bubble_bboxes(
+                    parsed_json=parsed_json,
+                    image_width=fetched_image.width,
+                    image_height=fetched_image.height,
+                )
                 parsed_data = self.result_normalizer.normalize(
-                    raw_json=llm_response.parsed_json,
+                    raw_json=parsed_json,
                     image_meta=image_meta,
                     options=options,
                 )
@@ -212,11 +776,11 @@ class ScreenshotParserService:
             logger.info(
                 f"[{session_id}] Parse complete - "
                 f"Session: {session_id}, "
-                f"Provider: {llm_response.provider}, "
-                f"Model: {llm_response.model}, "
-                f"Input tokens: {llm_response.input_tokens}, "
-                f"Output tokens: {llm_response.output_tokens}, "
-                f"Cost: ${llm_response.cost_usd:.4f}"
+                f"Provider: {llm_result.provider}, "
+                f"Model: {llm_result.model}, "
+                f"Input tokens: {llm_result.input_tokens}, "
+                f"Output tokens: {llm_result.output_tokens}, "
+                f"Cost: ${llm_result.cost_usd:.4f}"
             )
             
             # Return success response
@@ -290,3 +854,107 @@ class ScreenshotParserService:
             )
         
         return len(low_confidence_bubbles)
+
+    def _parse_json_response(self, raw_text: str) -> dict:
+        """Parse JSON from LLM response text.
+        
+        Tries multiple strategies to extract valid JSON:
+        1. Direct JSON parsing
+        2. Extract from markdown code blocks
+        3. Extract complete JSON objects using bracket matching
+        4. Simple regex pattern matching
+        
+        Args:
+            raw_text: Raw text response from LLM
+            
+        Returns:
+            Parsed JSON dictionary
+            
+        Raises:
+            ValueError: If no valid JSON could be extracted
+        """
+        import json
+        import re
+        
+        # 1. Try direct JSON parsing
+        try:
+            return json.loads(raw_text)
+        except json.JSONDecodeError:
+            pass
+
+        # 2. Try extracting from markdown code blocks
+        code_block_pattern = r"```(?:json)?\s*\n?(.*?)\n?```"
+        matches = re.findall(code_block_pattern, raw_text, re.DOTALL)
+        for match in matches:
+            try:
+                return json.loads(match.strip())
+            except json.JSONDecodeError:
+                continue
+
+        # 3. Try extracting complete JSON objects using stack matching
+        json_objects = self._extract_complete_json_objects(raw_text)
+        for json_str in json_objects:
+            try:
+                return json.loads(json_str)
+            except json.JSONDecodeError:
+                continue
+
+        # 4. Fallback: Try simple regex pattern
+        json_pattern = r"\{.*\}"
+        matches = re.findall(json_pattern, raw_text, re.DOTALL)
+        for match in matches:
+            try:
+                return json.loads(match)
+            except json.JSONDecodeError:
+                continue
+
+        # All parsing attempts failed
+        raise ValueError(f"Could not extract valid JSON from response: {raw_text[:200]}...")
+
+    def _extract_complete_json_objects(self, text: str) -> list[str]:
+        """Extract all complete JSON objects from text using stack-based bracket matching.
+        
+        This method finds properly balanced JSON objects by tracking opening and closing braces.
+        
+        Args:
+            text: Text that may contain JSON objects
+            
+        Returns:
+            List of JSON object strings (properly balanced braces)
+        """
+        results = []
+        stack = []
+        start_idx = None
+        in_string = False
+        escape_next = False
+        
+        for i, char in enumerate(text):
+            # Handle string escaping
+            if escape_next:
+                escape_next = False
+                continue
+            
+            if char == '\\':
+                escape_next = True
+                continue
+            
+            # Track if we're inside a string (to ignore braces in strings)
+            if char == '"':
+                in_string = not in_string
+                continue
+            
+            # Only process braces outside of strings
+            if not in_string:
+                if char == '{':
+                    if not stack:
+                        start_idx = i
+                    stack.append('{')
+                elif char == '}':
+                    if stack and stack[-1] == '{':
+                        stack.pop()
+                        if not stack and start_idx is not None:
+                            # Found a complete JSON object
+                            results.append(text[start_idx:i+1])
+                            start_idx = None
+        
+        return results

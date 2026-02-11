@@ -71,6 +71,7 @@ async def generate_reply(
     """
     try:
         # Call orchestrator to generate reply
+        logger.info(f"generate_reply interface get request{request}")
         response = await orchestrator.generate_reply(request)
         return response
         

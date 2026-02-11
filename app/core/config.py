@@ -9,15 +9,34 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class LLMConfig(BaseSettings):
-    """LLM-related configuration."""
+    """LLM-related configuration.
+    
+    Note: These are fallback values. The actual LLM configuration is loaded from
+    core/llm_adapter/config.yaml by the LLMAdapter at runtime.
+    
+    To see the actual provider and models being used, check:
+    - core/llm_adapter/config.yaml (main configuration)
+    - Environment variables (OPENROUTER_API_KEY, etc.)
+    """
     
     model_config = SettingsConfigDict(env_prefix="LLM_")
     
+    # These are fallback values only - actual config is in core/llm_adapter/config.yaml
     default_provider: str = "openrouter"
-    default_model: str = "google/gemini-2.5-flash"
-    fallback_model: str = "google/gemini-2.5-flash"
-    cheap_model: str = "google/gemini-2.5-flash"
-    premium_model: str = "google/gemini-2.5-flash"
+    default_model: str = "google/gemini-2.0-flash-lite-001"
+    fallback_model: str = "google/gemini-2.0-flash-lite-001"
+    cheap_model: str = "google/gemini-2.0-flash-lite-001"
+    premium_model: str = "google/gemini-2.0-flash-lite-001"
+    
+    # Multimodal image transport format: "base64" or "url"
+    # base64: Compress and encode image as base64 (recommended for most providers)
+    # url: Send image URL directly (faster but not all providers support it)
+    multimodal_image_format: Literal["base64", "url"] = "base64"
+    
+    # Whether to compress images before sending to LLM
+    # true: Compress to 800px max dimension (saves tokens, faster)
+    # false: Use original image size (better quality, more tokens)
+    multimodal_image_compress: bool = True
 
 
 class OrchestratorConfig(BaseSettings):
@@ -58,6 +77,7 @@ class TraceConfig(BaseSettings):
     level: Literal["error", "info", "debug"] = "info"
     file_path: str = "logs/trace.jsonl"
     log_llm_prompt: bool = True
+    log_timing: bool = False  # Enable timing logs for performance monitoring
 
 
 class PromptConfig(BaseSettings):
@@ -137,6 +157,27 @@ class CacheConfig(BaseSettings):
     redis_key_prefix: str = "cache"
 
 
+class DebugConfig(BaseSettings):
+    """Debug and logging control configuration."""
+    
+    model_config = SettingsConfigDict(env_prefix="DEBUG_")
+    
+    # Race strategy debug settings
+    # When True, wait for all models to complete and log all results
+    # When False, stop after first valid result (faster, production mode)
+    race_wait_all: bool = False
+    
+    # Detailed logging for different components
+    log_merge_step_extraction: bool = True  # Log extracted bubbles from merge_step
+    log_screenshot_parse: bool = True  # Log extracted dialogs from screenshot_parse
+    log_race_strategy: bool = True  # Log race strategy details
+    log_llm_calls: bool = False  # Log detailed LLM call information
+    log_validation: bool = False  # Log validation details
+    log_premium_bbox_calculation: bool = False  # Log detailed bbox coordinate calculation for premium model
+    log_full_result_content: bool = False  # Log full result content including long text (may be very verbose)
+    log_cache_operations: bool = False  # Log detailed cache read/write operations (Redis keys, scene values, etc.)
+
+
 class AppConfig(BaseSettings):
     """Main application configuration."""
     
@@ -151,6 +192,13 @@ class AppConfig(BaseSettings):
     app_version: str = "0.1.0"
     debug: bool = False
     no_reply_cache: bool = True
+    no_strategy_planner: bool = True
+    no_persona_cache: bool = True
+    no_intimacy_check: bool = False  # Disable intimacy check if True
+    log_failed_json_replies: bool = False  # Log failed JSON parsing replies to file
+    
+    # Merge Step Configuration
+    use_merge_step: bool = False  # Enable merge_step optimized flow if True
     
     # API settings
     api_prefix: str = "/api/v1"
@@ -171,6 +219,7 @@ class AppConfig(BaseSettings):
     database: DatabaseConfig = DatabaseConfig()
     trace: TraceConfig = TraceConfig()
     prompt: PromptConfig = PromptConfig.from_env()
+    debug_config: DebugConfig = DebugConfig()
     moderation: ModerationClientConfig = ModerationClientConfig()
     cache: CacheConfig = CacheConfig()
 

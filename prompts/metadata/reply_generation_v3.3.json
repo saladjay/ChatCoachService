@@ -1,0 +1,13 @@
+{
+  "prompt_id": "reply_generation_v3.3",
+  "prompt_type": "reply_generation",
+  "version": "v3.3",
+  "created_at": "2026-02-10T19:36:47.563427",
+  "author": "cli_user",
+  "description": "",
+  "tags": [],
+  "token_estimate": 0,
+  "performance_notes": "",
+  "is_active": true,
+  "parent_version": null
+}

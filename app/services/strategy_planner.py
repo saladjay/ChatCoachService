@@ -113,7 +113,8 @@ class StrategyPlanner:
             quality="normal",
             user_id="system",
             provider=self.provider,
-            model=self.model
+            model=self.model,
+            max_tokens=200  # Limit output to prevent excessive token usage
         )
         
         result = await self._llm_adapter.call(llm_call)

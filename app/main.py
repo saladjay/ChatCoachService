@@ -38,6 +38,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     from app.core.v1_config import get_v1_config
     from app.core.container import get_container
     get_v1_config().setup_logging()
+    
+    # Print LLM configuration on startup
+    print_llm_configuration()
+    
     # Startup: Initialize database
     await init_db()
 
@@ -62,6 +66,114 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         logger.warning(f"SessionCategorizedCacheService stop failed: {e}", exc_info=True)
     # Shutdown: Close database connections
     await close_db()
+
+
+def print_llm_configuration() -> None:
+    """Print LLM configuration on startup for debugging."""
+    try:
+        import sys
+        import os
+        from pathlib import Path
+        
+        print("\n" + "=" * 80)
+        print("LLM CONFIGURATION")
+        print("=" * 80)
+        
+        # Print app-level settings
+        print(f"\nApplication Settings (from .env):")
+        print(f"  Default Provider:           {settings.llm.default_provider}")
+        print(f"  Default Model:              {settings.llm.default_model or 'N/A'}")
+        print(f"  Multimodal Image Format:    {settings.llm.multimodal_image_format}")
+        
+        # Get disable_quality_routing from environment variable
+        disable_routing = os.environ.get("LLM_DISABLE_QUALITY_ROUTING", "").lower() in ("true", "1", "yes")
+        print(f"  Disable Quality Routing:    {disable_routing}")
+        
+        # Load LLM adapter config
+        llm_adapter_path = Path(__file__).parent.parent / "core" / "llm_adapter"
+        if str(llm_adapter_path) not in sys.path:
+            sys.path.insert(0, str(llm_adapter_path))
+        
+        from llm_adapter import ConfigManager
+        
+        config_path = llm_adapter_path / "config.yaml"
+        config_manager = ConfigManager(str(config_path))
+        default_provider = config_manager.get_default_provider()
+        
+        print(f"\nLLM Adapter Configuration (from config.yaml):")
+        print(f"  Default Provider:           {default_provider}")
+        
+        # Get provider config
+        try:
+            provider_config = config_manager.get_provider_config(default_provider)
+            
+            print(f"\nProvider '{default_provider}' Configuration:")
+            print(f"  API Key:                    {'*' * 20}...{provider_config.api_key[-4:] if provider_config.api_key else 'NOT SET'}")
+            
+            if hasattr(provider_config, 'base_url') and provider_config.base_url:
+                print(f"  Base URL:                   {provider_config.base_url}")
+            
+            print(f"  Models:")
+            if hasattr(provider_config.models, 'cheap'):
+                print(f"    cheap:                    {provider_config.models.cheap}")
+            if hasattr(provider_config.models, 'normal'):
+                print(f"    normal:                   {provider_config.models.normal}")
+            if hasattr(provider_config.models, 'premium'):
+                print(f"    premium:                  {provider_config.models.premium}")
+            if hasattr(provider_config.models, 'multimodal'):
+                print(f"    multimodal:               {provider_config.models.multimodal}")
+            
+            # Print generation params if available
+            if hasattr(provider_config, 'generation_params') and provider_config.generation_params:
+                print(f"  Generation Parameters:")
+                # Convert to dict if it's a Pydantic model
+                if hasattr(provider_config.generation_params, 'model_dump'):
+                    params_dict = provider_config.generation_params.model_dump()
+                elif hasattr(provider_config.generation_params, 'dict'):
+                    params_dict = provider_config.generation_params.dict()
+                elif isinstance(provider_config.generation_params, dict):
+                    params_dict = provider_config.generation_params
+                else:
+                    params_dict = vars(provider_config.generation_params)
+                
+                for key, value in params_dict.items():
+                    if value is not None:  # Only show non-None values
+                        print(f"    {key:24s}  {value}")
+        
+        except Exception as e:
+            print(f"  Error loading provider config: {e}")
+        
+        # Print proxy configuration
+        proxy_url = config_manager.get_proxy_url()
+        print(f"\nProxy Configuration:")
+        if proxy_url:
+            print(f"  Proxy URL:                  {proxy_url}")
+            print(f"  Status:                     ENABLED")
+        else:
+            print(f"  Status:                     DISABLED")
+        
+        # Print quality routing configuration
+        print(f"\nQuality Routing:")
+        if disable_routing:
+            print(f"  Status:                     DISABLED (using default provider only)")
+        else:
+            print(f"  Status:                     ENABLED (with fallback)")
+            
+            # Show available providers for each quality level
+            from llm_adapter.router import Router
+            router = Router(config_manager)
+            
+            for quality in ["low", "medium", "high"]:
+                available = router.get_available_providers(quality)
+                if available:
+                    providers_str = ", ".join([f"{p}({m})" for p, m in available[:3]])
+                    print(f"    {quality:8s}:              {providers_str}")
+        
+        print("=" * 80 + "\n")
+        
+    except Exception as e:
+        logger.error(f"Failed to print LLM configuration: {e}", exc_info=True)
+        print(f"\n⚠ Warning: Could not load LLM configuration: {e}\n")
 
 
 def create_app() -> FastAPI:
@@ -295,6 +407,7 @@ def register_routes(app: FastAPI) -> None:
     
     # Register API routes
     from app.api.generate import router as generate_router
+    from app.api.fetch import router as fetch_router
     from app.api.context import router as context_router
     from app.api.user_profile import router as user_profile_router
     from app.api.screenshot import router as screenshot_router
@@ -303,6 +416,7 @@ def register_routes(app: FastAPI) -> None:
     app.include_router(health_router)
     
     app.include_router(generate_router, prefix=settings.api_prefix)
+    app.include_router(fetch_router, prefix=settings.api_prefix)
     app.include_router(context_router, prefix=settings.api_prefix)
     app.include_router(user_profile_router, prefix=settings.api_prefix)
     app.include_router(screenshot_router, prefix=settings.api_prefix)

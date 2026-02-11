@@ -7,6 +7,37 @@ echo "Starting ChatCoach API Server"
 echo "========================================"
 echo ""
 
+# Check if .venv exists, if not run uv sync
+if [ ! -d ".venv" ]; then
+    echo "Virtual environment not found. Running uv sync..."
+    if command -v uv > /dev/null 2>&1; then
+        uv sync
+        if [ $? -eq 0 ]; then
+            echo "✓ Virtual environment created successfully"
+        else
+            echo "Error: Failed to create virtual environment"
+            echo "Please run 'uv sync' manually"
+            exit 1
+        fi
+    else
+        echo "Error: uv is not installed"
+        echo "Please install uv first: https://docs.astral.sh/uv/getting-started/installation/"
+        exit 1
+    fi
+    echo ""
+fi
+
+# Activate virtual environment if it exists
+if [ -f ".venv/bin/activate" ]; then
+    echo "Activating virtual environment..."
+    # shellcheck disable=SC1091
+    . ./.venv/bin/activate
+    echo "✓ Virtual environment activated"
+else
+    echo "Warning: Virtual environment activation script not found"
+    echo "Continuing without virtual environment..."
+fi
+
 script_args=()
 log_prompt=false
 for arg in "$@"; do
@@ -17,12 +48,41 @@ for arg in "$@"; do
   fi
 done
 
-# Check if uvicorn is installed
 echo "Checking dependencies..."
-if ! python -m pip show uvicorn > /dev/null 2>&1; then
-    echo "Error: uvicorn is not installed"
-    echo "Please run: pip install uvicorn"
-    exit 1
+if ! python -c "import uvicorn; print('ok')" > /dev/null 2>&1; then
+  echo "Error: uvicorn is not installed"
+  echo "Please run: uv pip install uvicorn"
+  echo "Or: pip install uvicorn"
+  exit 1
+fi
+echo "✓ uvicorn is installed"
+
+# Check and start Redis
+echo "Checking Redis..."
+if command -v redis-cli > /dev/null 2>&1; then
+  if redis-cli ping > /dev/null 2>&1; then
+    echo "✓ Redis is already running"
+  else
+    echo "Starting Redis server..."
+    if command -v redis-server > /dev/null 2>&1; then
+      # Start Redis in background
+      redis-server --daemonize yes --port 6379
+      sleep 1
+      if redis-cli ping > /dev/null 2>&1; then
+        echo "✓ Redis started successfully"
+      else
+        echo "Warning: Failed to start Redis"
+        echo "Please start Redis manually: redis-server"
+      fi
+    else
+      echo "Warning: redis-server not found"
+      echo "Please install Redis or start it manually"
+    fi
+  fi
+else
+  echo "Warning: Redis not found"
+  echo "Please install Redis: sudo apt-get install redis-server (Ubuntu/Debian)"
+  echo "Or: brew install redis (macOS)"
 fi
 
 # Check if .env file exists

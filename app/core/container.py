@@ -48,7 +48,7 @@ from app.services.intimacy_checker_impl import ModerationServiceIntimacyChecker
 from app.services.screenshot_parser import ScreenshotParserService
 from app.services.image_fetcher import ImageFetcher
 from app.services.prompt_manager import PromptManager
-from app.services.llm_adapter import MultimodalLLMClient
+from app.services.llm_adapter import LLMAdapterImpl
 from app.services.result_normalizer import ResultNormalizer
 from app.services.session_categorized_cache_service import SessionCategorizedCacheService
 
@@ -203,8 +203,8 @@ class ServiceContainer:
         if not self.has("prompt_manager"):
             self.register("prompt_manager", self._create_prompt_manager())
         
-        if not self.has("multimodal_llm_client"):
-            self.register("multimodal_llm_client", self._create_multimodal_llm_client())
+        if not self.has("llm_adapter"):
+            self.register("llm_adapter", self._create_llm_adapter())
         
         if not self.has("result_normalizer"):
             self.register("result_normalizer", self._create_result_normalizer())
@@ -437,9 +437,9 @@ class ServiceContainer:
         """Create ImageFetcher for screenshot parsing.
         
         Returns:
-            ImageFetcher instance.
+            ImageFetcher instance with compression enabled (max dimension: 800px).
         """
-        return ImageFetcher(timeout=30.0)
+        return ImageFetcher(timeout=30.0, max_dimension=800)
 
     def _create_prompt_manager(self) -> PromptManager:
         """Create PromptManager for prompt version management.
@@ -449,13 +449,13 @@ class ServiceContainer:
         """
         return PromptManager()
 
-    def _create_multimodal_llm_client(self) -> MultimodalLLMClient:
-        """Create MultimodalLLMClient for screenshot parsing.
+    def _create_llm_adapter(self) -> LLMAdapterImpl:
+        """Create LLMAdapterImpl for multimodal LLM calls.
         
         Returns:
-            MultimodalLLMClient instance.
+            LLMAdapterImpl instance.
         """
-        return MultimodalLLMClient(config=self.config)
+        return LLMAdapterImpl()
 
     def _create_result_normalizer(self) -> ResultNormalizer:
         """Create ResultNormalizer for screenshot parsing.
@@ -474,7 +474,7 @@ class ServiceContainer:
         return ScreenshotParserService(
             image_fetcher=self.get("image_fetcher"),
             prompt_manager=self.get("prompt_manager"),
-            llm_client=self.get("multimodal_llm_client"),
+            llm_adapter=self.get("llm_adapter"),
             result_normalizer=self.get("result_normalizer"),
         )
 

@@ -26,6 +26,7 @@ class PromptVersion(Enum):
     V3_1_COMPACT_V2 = "v3.1-compact_v2"
     V3_1_COMPACT_V2_WITH_REASONING = "v3.1-compact_v2_with_reasoning"
     V3_2_COMPACT_V2_WITHOUT_REASONING = "v3.2-compact_v2_no_reasoning"
+    V3_3 = "v3.3"
 
 
 class PromptType(Enum):
@@ -39,6 +40,7 @@ class PromptType(Enum):
     TRAIT_MAPPING = "trait_mapping"
     SCREENSHOT_PARSE = "screenshot_parse"
     PREFERENCE_ANALYSIS = "preference_analysis"
+    MERGE_STEP = "merge_step"
 
 
 @dataclass
