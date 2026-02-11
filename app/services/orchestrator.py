@@ -424,7 +424,6 @@ class Orchestrator:
             
             # Call multimodal LLM with race strategy
             from app.services.screenshot_parser import ScreenshotParserService
-            from app.core.config import settings
             
             # Get image format configuration
             image_format = settings.llm.multimodal_image_format
