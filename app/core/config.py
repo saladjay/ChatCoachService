@@ -199,6 +199,7 @@ class AppConfig(BaseSettings):
     
     # Merge Step Configuration
     use_merge_step: bool = False  # Enable merge_step optimized flow if True
+    use_merge_step_parallel: bool = True  # Enable parallel processing for multiple images in merge_step (only effective when use_merge_step=True)
     
     # API settings
     api_prefix: str = "/api/v1"

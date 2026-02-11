@@ -1306,18 +1306,26 @@ async def handle_image(
     
     # Check if merge_step is enabled
     use_merge_step = settings.use_merge_step
+    use_parallel = settings.use_merge_step_parallel and use_merge_step
     
     if use_merge_step:
-        logger.info("Using merge_step optimized flow")
+        if use_parallel:
+            logger.info("Using merge_step optimized flow with PARALLEL processing")
+        else:
+            logger.info("Using merge_step optimized flow with SERIAL processing")
     else:
         logger.info("Using traditional separate flow")
     
     # Step 1: Process all screenshots
     items: list[tuple[Literal["image", "text"], str, ImageResult]] = []
     
-    # Process images in parallel if using merge_step
-    if use_merge_step and any(_is_url(url) for url in request.content):
-        logger.info(f"Processing content in parallel using merge_step")
+    # Determine processing mode
+    has_images = any(_is_url(url) for url in request.content)
+    should_use_parallel = use_parallel and has_images
+    
+    if should_use_parallel:
+        # PARALLEL PROCESSING MODE
+        logger.info(f"Processing {len([url for url in request.content if _is_url(url)])} images in PARALLEL")
         
         # Create tasks for parallel processing (only for images)
         async def process_single_content(content_url: str, index: int):
@@ -1436,7 +1444,11 @@ async def handle_image(
             raise
     
     else:
-        # Serial processing for traditional flow
+        # SERIAL PROCESSING MODE (traditional flow or serial merge_step)
+        num_images = len([url for url in request.content if _is_url(url)])
+        if num_images > 0:
+            logger.info(f"Processing {num_images} images in SERIAL (one by one)")
+        
         for content_url in request.content:
             try:
                 logger.info(f"Processing content: {content_url}")
