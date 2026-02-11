@@ -309,6 +309,12 @@ def _repair_json_string(text: str) -> str:
     # Remove multi-line comments
     text = re.sub(r'/\*.*?\*/', '', text, flags=re.DOTALL)
     
+    # Step 8: Fix invalid escape sequences
+    # Remove backslashes before characters that don't need escaping in JSON
+    # Valid JSON escapes: \" \\ \/ \b \f \n \r \t \uXXXX
+    # Invalid escapes that LLMs sometimes add: \[ \] \( \) etc.
+    text = re.sub(r'\\([^\"\\/bfnrtu])', r'\1', text)
+    
     return text
     # Strategy 6: Final fallback - wrap plain text as JSON
     # This handles cases where LLM returns acknowledgment text like "好的，我明白了。"
@@ -571,6 +577,16 @@ async def predict(
 
 
 async def _get_screenshot_analysis_from_cache(content_url, session_id, scene, cache_service: SessionCategorizedCacheServiceDep):
+    """
+    Get cached screenshot analysis result.
+    
+    If cached data contains absolute pixel coordinates (old format),
+    attempts to normalize them using cached image dimensions.
+    
+    Returns None if:
+    - No cache found
+    - Cache data is invalid and cannot be repaired
+    """
     cached_event = await cache_service.get_resource_category_last(
         session_id=session_id,
         category="image_result",
@@ -580,9 +596,64 @@ async def _get_screenshot_analysis_from_cache(content_url, session_id, scene, ca
     if cached_event:
         cached_payload = cached_event.get("payload")
         if isinstance(cached_payload, dict):
-            cached_result = ImageResult(**cached_payload)
-            logger.info(f"Using cached result for {content_url}")
-            return cached_result
+            try:
+                # Try to create ImageResult directly
+                cached_result = ImageResult(**cached_payload)
+                logger.info(f"Using cached result for {content_url}")
+                return cached_result
+            except Exception as e:
+                # Cache data might have absolute pixel coordinates (old format)
+                # Try to repair by normalizing with cached dimensions
+                logger.warning(f"Cached result for {content_url} has validation errors: {e}")
+                
+                # Check if error is due to coordinate range
+                if "position" in str(e) and "must be in range [0.0, 1.0]" in str(e):
+                    logger.info(f"Attempting to repair coordinates using cached dimensions")
+                    
+                    # Get cached image dimensions
+                    from app.services.image_dimension_fetcher import get_dimension_fetcher
+                    dimension_fetcher = get_dimension_fetcher()
+                    cached_dimensions = await dimension_fetcher.get_cached_dimensions(
+                        url=content_url,
+                        cache_service=cache_service,
+                        session_id=session_id,
+                        scene=scene,
+                    )
+                    
+                    if cached_dimensions:
+                        image_width, image_height = cached_dimensions
+                        logger.info(f"Found cached dimensions: {image_width}x{image_height}")
+                        
+                        # Normalize coordinates in dialogs
+                        dialogs = cached_payload.get("dialogs", [])
+                        for dialog in dialogs:
+                            position = dialog.get("position", [])
+                            if len(position) == 4:
+                                x1, y1, x2, y2 = position
+                                
+                                # Check if coordinates are absolute pixels
+                                if any(coord > 1.0 for coord in position):
+                                    # Normalize to 0.0-1.0 range
+                                    x1 = max(0.0, min(1.0, x1 / image_width))
+                                    y1 = max(0.0, min(1.0, y1 / image_height))
+                                    x2 = max(0.0, min(1.0, x2 / image_width))
+                                    y2 = max(0.0, min(1.0, y2 / image_height))
+                                    
+                                    dialog["position"] = [x1, y1, x2, y2]
+                        
+                        # Try to create ImageResult again with normalized coordinates
+                        try:
+                            cached_result = ImageResult(**cached_payload)
+                            logger.info(f"Successfully repaired and using cached result for {content_url}")
+                            return cached_result
+                        except Exception as e2:
+                            logger.warning(f"Failed to repair cached result: {e2}")
+                    else:
+                        logger.warning(f"No cached dimensions found for {content_url}, cannot repair coordinates")
+                
+                # Could not repair, return None to trigger fresh analysis
+                logger.info(f"Will perform fresh analysis for {content_url}")
+                return None
     return None
 
 
@@ -669,6 +740,7 @@ async def get_merge_step_analysis_result(
     request: PredictRequest,
     orchestrator: OrchestratorDep,
     cache_service: SessionCategorizedCacheServiceDep,
+    strategy: str = "auto",
 ) -> tuple[ImageResult, str]:
     """
     Get analysis result using merge_step optimized flow.
@@ -681,6 +753,7 @@ async def get_merge_step_analysis_result(
         request: PredictRequest with user info
         orchestrator: Orchestrator service
         cache_service: Cache service
+        strategy: Processing strategy ("parallel", "serial", or "auto")
         
     Returns:
         Tuple of (ImageResult with scenario, scenario_json_string)
@@ -690,6 +763,22 @@ async def get_merge_step_analysis_result(
     """
     try:
         logger.info(f"Processing content with merge_step: {content_url}")
+        
+        # Check cache first
+        cached_result = await _get_screenshot_analysis_from_cache(
+            content_url,
+            request.session_id,
+            request.scene,
+            cache_service,
+        )
+        
+        if cached_result:
+            logger.info(f"Cache hit for {content_url}")
+            # Extract scenario from cached result
+            scenario_json = cached_result.scenario if cached_result.scenario else "{}"
+            return cached_result, scenario_json
+        
+        logger.info(f"Cache miss for {content_url}, calling merge_step analysis")
         
         # Get image format configuration
         from app.core.config import settings
@@ -829,6 +918,20 @@ async def get_merge_step_analysis_result(
             )
         
         logger.info(f"merge_step analysis completed for {content_url}: {len(dialogs)} dialogs extracted")
+        
+        # Cache the new result
+        image_result_data = image_result.model_dump(mode="json")
+        image_result_data["_model"] = "merge-step"
+        image_result_data["_strategy"] = strategy  # Use provided strategy
+        
+        await cache_service.append_event(
+            session_id=request.session_id,
+            category="image_result",
+            resource=content_url,
+            payload=image_result_data,
+            scene=request.scene,
+        )
+        logger.info(f"Cached new merge_step result for {content_url} (strategy={strategy})")
         
         return image_result, json.dumps(scenario_json, ensure_ascii=False)
         
@@ -1203,145 +1306,286 @@ async def handle_image(
     
     # Check if merge_step is enabled
     use_merge_step = settings.use_merge_step
+    use_parallel = settings.use_merge_step_parallel and use_merge_step
     
     if use_merge_step:
-        logger.info("Using merge_step optimized flow")
+        if use_parallel:
+            logger.info("Using merge_step optimized flow with PARALLEL processing")
+        else:
+            logger.info("Using merge_step optimized flow with SERIAL processing")
     else:
         logger.info("Using traditional separate flow")
     
     # Step 1: Process all screenshots
     items: list[tuple[Literal["image", "text"], str, ImageResult]] = []
-    for content_url in request.content:
-        try:
-            logger.info(f"Processing content: {content_url}")
-            if not _is_url(content_url):
-                text_result = ImageResult(
-                    content=content_url,
-                    dialogs=[
-                        DialogItem(
-                            position=[0.0, 0.0, 0.0, 0.0],
-                            text=content_url,
-                            speaker="",
-                            from_user=False,
-                        )
-                    ],
-                )
-                items.append(("text", content_url, text_result))
-                continue
-            
-            # Time screenshot analysis with trace logging
-            screenshot_start = time.time()
-            
-            # Log screenshot analysis start
-            trace_logger.log_event({
-                "level": "debug",
-                "type": "screenshot_start",
-                "task_type": "merge_step" if use_merge_step else "screenshot_parse",
-                "url": content_url,
-                "session_id": request.session_id,
-                "user_id": request.user_id,
-            })
-            
-            # Choose flow based on configuration
-            if use_merge_step:
+    
+    # Determine processing mode
+    has_images = any(_is_url(url) for url in request.content)
+    should_use_parallel = use_parallel and has_images
+    
+    if should_use_parallel:
+        # PARALLEL PROCESSING MODE
+        logger.info(f"Processing {len([url for url in request.content if _is_url(url)])} images in PARALLEL")
+        
+        # Create tasks for parallel processing (only for images)
+        async def process_single_content(content_url: str, index: int):
+            """Process a single content item (image or text)."""
+            try:
+                # Handle text content
+                if not _is_url(content_url):
+                    text_result = ImageResult(
+                        content=content_url,
+                        dialogs=[
+                            DialogItem(
+                                position=[0.0, 0.0, 0.0, 0.0],
+                                text=content_url,
+                                speaker="",
+                                from_user=False,
+                            )
+                        ],
+                    )
+                    return (index, "text", content_url, text_result)
+                
+                # Handle image content
+                screenshot_start = time.time()
+                
+                # Log screenshot analysis start
+                trace_logger.log_event({
+                    "level": "debug",
+                    "type": "screenshot_start",
+                    "task_type": "merge_step",
+                    "url": content_url,
+                    "session_id": request.session_id,
+                    "user_id": request.user_id,
+                })
+                
                 # Use merge_step optimized flow
                 image_result, scenario_json = await get_merge_step_analysis_result(
                     content_url,
                     request,
                     orchestrator,
                     cache_service,
+                    strategy="parallel",  # Mark as parallel processing
                 )
-            else:
-                # Use traditional separate flow
-                image_result = await get_screenshot_analysis_result(
-                    content_url,
-                    request.language,
-                    request.session_id,
-                    request.scene,
-                    cache_service,
-                    screenshot_parser,
-                )
+                
+                screenshot_duration_ms = int((time.time() - screenshot_start) * 1000)
+                
+                # Log screenshot analysis end with trace
+                trace_logger.log_event({
+                    "level": "debug",
+                    "type": "screenshot_end",
+                    "task_type": "merge_step",
+                    "url": content_url,
+                    "session_id": request.session_id,
+                    "user_id": request.user_id,
+                    "duration_ms": screenshot_duration_ms,
+                })
+                
+                if trace_logger.should_log_timing():
+                    logger.info(f"Screenshot analysis completed in {screenshot_duration_ms}ms for {content_url}")
+                
+                image_result.content = content_url
+                logger.info(f"Content processed successfully: {len(image_result.dialogs)} dialogs extracted")
+                
+                # Validate that dialogs were extracted
+                if not image_result.dialogs or len(image_result.dialogs) == 0:
+                    logger.error(f"No dialogs extracted from image: {content_url}")
+                    raise HTTPException(
+                        status_code=400,
+                        detail="No dialogs found in the image. Please ensure the image contains chat messages.",
+                    )
+                
+                # Note: Cache is handled by get_merge_step_analysis_result
+                # No need to cache again here
+                
+                return (index, "image", content_url, image_result)
+                
+            except Exception as e:
+                error_msg = str(e)
+                
+                # Determine error type and handle accordingly
+                if (
+                    isinstance(e, LLMAdapterError)
+                    or "model unavailable" in error_msg.lower()
+                    or "provider not configured" in error_msg.lower()
+                    or "all providers failed" in error_msg.lower()
+                    or "not available" in error_msg.lower()
+                ):
+                    logger.error(f"Model unavailable for {content_url}: {e}")
+                    raise HTTPException(status_code=401, detail="Model Unavailable")
+                
+                elif "load" in error_msg.lower() or "download" in error_msg.lower():
+                    logger.error(f"Image load failed for {content_url}: {e}")
+                    raise HTTPException(status_code=400, detail=f"Load image failed: {str(e)}")
+                
+                else:
+                    logger.error(f"Inference failed for {content_url}: {e}", exc_info=True)
+                    raise HTTPException(status_code=500, detail=f"Inference error: {str(e)}")
+        
+        # Process all content in parallel
+        try:
+            content_tasks = [
+                process_single_content(url, idx) 
+                for idx, url in enumerate(request.content)
+            ]
+            content_results = await asyncio.gather(*content_tasks)
             
-            screenshot_duration_ms = int((time.time() - screenshot_start) * 1000)
+            # Sort by original index to maintain order
+            content_results_sorted = sorted(content_results, key=lambda x: x[0])
             
-            # Log screenshot analysis end with trace
-            trace_logger.log_event({
-                "level": "debug",
-                "type": "screenshot_end",
-                "task_type": "merge_step" if use_merge_step else "screenshot_parse",
-                "url": content_url,
-                "session_id": request.session_id,
-                "user_id": request.user_id,
-                "duration_ms": screenshot_duration_ms,
-            })
+            # Extract items without index
+            items = [(kind, url, result) for _, kind, url, result in content_results_sorted]
             
-            if trace_logger.should_log_timing():
-                logger.info(f"Screenshot analysis completed in {screenshot_duration_ms}ms for {content_url}")
+            logger.info(f"Parallel processing completed: {len(items)} items processed in original order")
             
-            image_result.content = content_url
-            logger.info(f"Image result: {type(image_result)}")
-            logger.info(f"Content processed successfully: {len(image_result.dialogs)} dialogs extracted")
-            
-            # Validate that dialogs were extracted
-            if not image_result.dialogs or len(image_result.dialogs) == 0:
-                logger.error(f"No dialogs extracted from image: {content_url}")
-                raise HTTPException(
-                    status_code=400,
-                    detail="No dialogs found in the image. Please ensure the image contains chat messages.",
-                )
-     
-            # Add metadata for consistency with merge_step cache
-            image_result_data = image_result.model_dump(mode="json")
-            image_result_data["_model"] = "non-merge-step"
-            image_result_data["_strategy"] = "traditional"
-            
-            await cache_service.append_event(
-                session_id=request.session_id,
-                category="image_result",
-                resource=content_url,
-                payload=image_result_data,
-                scene=request.scene,
-            )
-            items.append(("image", content_url, image_result))
         except Exception as e:
-            error_msg = str(e)
-            
-            # Determine error type and handle accordingly
-            if (
-                isinstance(e, LLMAdapterError)
-                or "model unavailable" in error_msg.lower()
-                or "provider not configured" in error_msg.lower()
-                or "all providers failed" in error_msg.lower()
-                or "not available" in error_msg.lower()
-            ):
-                # Requirement 7.1: Handle model unavailable errors (HTTP 401)
-                logger.error(f"Model unavailable for {content_url}: {e}")
-                metrics.record_request("predict", 401, int((time.time() - start_time) * 1000))
+            logger.error(f"Parallel content processing failed: {e}", exc_info=True)
+            metrics.record_request("predict", 500, int((time.time() - start_time) * 1000))
+            raise
+    
+    else:
+        # SERIAL PROCESSING MODE (traditional flow or serial merge_step)
+        num_images = len([url for url in request.content if _is_url(url)])
+        if num_images > 0:
+            logger.info(f"Processing {num_images} images in SERIAL (one by one)")
+        
+        for content_url in request.content:
+            try:
+                logger.info(f"Processing content: {content_url}")
+                if not _is_url(content_url):
+                    text_result = ImageResult(
+                        content=content_url,
+                        dialogs=[
+                            DialogItem(
+                                position=[0.0, 0.0, 0.0, 0.0],
+                                text=content_url,
+                                speaker="",
+                                from_user=False,
+                            )
+                        ],
+                    )
+                    items.append(("text", content_url, text_result))
+                    continue
                 
-                raise HTTPException(
-                    status_code=401,
-                    detail="Model Unavailable",
-                )
-            
-            elif "load" in error_msg.lower() or "download" in error_msg.lower():
-                # Requirement 7.2: Handle image load errors (HTTP 400)
-                logger.error(f"Image load failed for {content_url}: {e}")
-                metrics.record_request("predict", 400, int((time.time() - start_time) * 1000))
+                # Time screenshot analysis with trace logging
+                screenshot_start = time.time()
                 
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Load image failed: {str(e)}",
-                )
-            
-            else:
-                # Requirement 7.3: Handle inference errors (HTTP 500)
-                logger.error(f"Inference failed for {content_url}: {e}", exc_info=True)
-                metrics.record_request("predict", 500, int((time.time() - start_time) * 1000))
+                # Log screenshot analysis start
+                trace_logger.log_event({
+                    "level": "debug",
+                    "type": "screenshot_start",
+                    "task_type": "merge_step" if use_merge_step else "screenshot_parse",
+                    "url": content_url,
+                    "session_id": request.session_id,
+                    "user_id": request.user_id,
+                })
                 
-                raise HTTPException(
-                    status_code=500,
-                    detail=f"Inference error: {str(e)}",
-                )
+                # Choose flow based on configuration
+                if use_merge_step:
+                    # Use merge_step optimized flow
+                    image_result, scenario_json = await get_merge_step_analysis_result(
+                        content_url,
+                        request,
+                        orchestrator,
+                        cache_service,
+                        strategy="serial",  # Mark as serial processing
+                    )
+                else:
+                    # Use traditional separate flow
+                    image_result = await get_screenshot_analysis_result(
+                        content_url,
+                        request.language,
+                        request.session_id,
+                        request.scene,
+                        cache_service,
+                        screenshot_parser,
+                    )
+                
+                screenshot_duration_ms = int((time.time() - screenshot_start) * 1000)
+                
+                # Log screenshot analysis end with trace
+                trace_logger.log_event({
+                    "level": "debug",
+                    "type": "screenshot_end",
+                    "task_type": "merge_step" if use_merge_step else "screenshot_parse",
+                    "url": content_url,
+                    "session_id": request.session_id,
+                    "user_id": request.user_id,
+                    "duration_ms": screenshot_duration_ms,
+                })
+                
+                if trace_logger.should_log_timing():
+                    logger.info(f"Screenshot analysis completed in {screenshot_duration_ms}ms for {content_url}")
+                
+                image_result.content = content_url
+                logger.info(f"Image result: {type(image_result)}")
+                logger.info(f"Content processed successfully: {len(image_result.dialogs)} dialogs extracted")
+                
+                # Validate that dialogs were extracted
+                if not image_result.dialogs or len(image_result.dialogs) == 0:
+                    logger.error(f"No dialogs extracted from image: {content_url}")
+                    raise HTTPException(
+                        status_code=400,
+                        detail="No dialogs found in the image. Please ensure the image contains chat messages.",
+                    )
+         
+                # Cache only for traditional flow (merge_step handles its own caching)
+                if not use_merge_step:
+                    image_result_data = image_result.model_dump(mode="json")
+                    image_result_data["_model"] = "non-merge-step"
+                    image_result_data["_strategy"] = "serial"
+                    
+                    await cache_service.append_event(
+                        session_id=request.session_id,
+                        category="image_result",
+                        resource=content_url,
+                        payload=image_result_data,
+                        scene=request.scene,
+                    )
+                    logger.info(f"Cached traditional flow result for {content_url}")
+                
+                items.append(("image", content_url, image_result))
+            except Exception as e:
+                error_msg = str(e)
+                
+                # Determine error type and handle accordingly
+                if (
+                    isinstance(e, LLMAdapterError)
+                    or "model unavailable" in error_msg.lower()
+                    or "provider not configured" in error_msg.lower()
+                    or "all providers failed" in error_msg.lower()
+                    or "not available" in error_msg.lower()
+                ):
+                    # Requirement 7.1: Handle model unavailable errors (HTTP 401)
+                    logger.error(f"Model unavailable for {content_url}: {e}")
+                    metrics.record_request("predict", 401, int((time.time() - start_time) * 1000))
+                    
+                    raise HTTPException(
+                        status_code=401,
+                        detail="Model Unavailable",
+                    )
+                
+                elif "load" in error_msg.lower() or "download" in error_msg.lower():
+                    # Requirement 7.2: Handle image load errors (HTTP 400)
+                    logger.error(f"Image load failed for {content_url}: {e}")
+                    metrics.record_request("predict", 400, int((time.time() - start_time) * 1000))
+                    
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Load image failed: {str(e)}",
+                    )
+                
+                else:
+                    # Requirement 7.3: Handle inference errors (HTTP 500)
+                    logger.error(f"Inference failed for {content_url}: {e}", exc_info=True)
+                    metrics.record_request("predict", 500, int((time.time() - start_time) * 1000))
+                    
+                    raise HTTPException(
+                        status_code=500,
+                        detail=f"Inference error: {str(e)}",
+                    )
+    
+    # Step 2: Build unified context from all dialogs
 
     # If merge_step is enabled and we have results, return them directly
     if use_merge_step and items:

@@ -95,7 +95,7 @@ gemini:
 
 ### .env
 ```bash
-GOOGLE_APPLICATION_CREDENTIALS=core/llm_adapter/wingy-gemini-caller-e87ee-0e97104c6c62.json
+GOOGLE_APPLICATION_CREDENTIALS=path/to/your_gpc.json
 ```
 
 ## 下一步

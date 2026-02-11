@@ -137,6 +137,7 @@ class LoadTester:
         image_url: str | None = None,
         disable_cache: bool = False,
         sign_secret: str = "",
+        image_urls: list[str] | None = None,
         language: str = "en",
     ):
         """Initialize load tester.
@@ -144,7 +145,8 @@ class LoadTester:
         Args:
             base_url: Base URL of the API
             timeout: Request timeout in seconds
-            image_url: Optional custom image URL to test
+            image_url: Optional single custom image URL to test (deprecated, use image_urls)
+            image_urls: Optional list of image URLs to test (for multi-image testing)
             disable_cache: If True, bypass cache by using unique session IDs
             sign_secret: Secret for generating sign (default from config.yaml)
             language: Language code for replies (en, zh, etc.)
@@ -152,6 +154,7 @@ class LoadTester:
         self.base_url = base_url.rstrip('/')
         self.timeout = timeout
         self.image_url = image_url
+        self.image_urls = image_urls
         self.disable_cache = disable_cache
         self.sign_secret = sign_secret
         self.language = language
@@ -186,6 +189,7 @@ class LoadTester:
                 if self.disable_cache and payload:
                     payload = create_test_payload(
                         image_url=self.image_url,
+                        image_urls=self.image_urls,
                         disable_cache=True,
                         request_index=self._request_counter,
                         sign_secret=self.sign_secret,
@@ -269,7 +273,11 @@ class LoadTester:
         print(f"  Concurrent:        {concurrent}")
         print(f"  Method:            {method}")
         print(f"  Language:          {self.language}")
-        if self.image_url:
+        if self.image_urls:
+            print(f"  Images:            {len(self.image_urls)} images (multi-image test)")
+            for i, url in enumerate(self.image_urls, 1):
+                print(f"    {i}. {url}")
+        elif self.image_url:
             print(f"  Image URL:         {self.image_url}")
         if self.disable_cache:
             print(f"  Cache:             DISABLED (unique session per request)")
@@ -397,6 +405,7 @@ def generate_sign(session_id: str, secret: str = "") -> str:
 
 def create_test_payload(
     image_url: str | None = None,
+    image_urls: list[str] | None = None,
     disable_cache: bool = False,
     request_index: int = 0,
     sign_secret: str = "",
@@ -405,7 +414,8 @@ def create_test_payload(
     """Create a test payload for the predict endpoint.
     
     Args:
-        image_url: Optional custom image URL to test
+        image_url: Optional single image URL to test (deprecated, use image_urls)
+        image_urls: Optional list of image URLs to test (for multi-image testing)
         disable_cache: If True, use unique session_id to bypass cache
         request_index: Request index for unique session_id generation
         sign_secret: Secret for generating sign (default from config.yaml)
@@ -414,8 +424,16 @@ def create_test_payload(
     Returns:
         Test payload dictionary
     """
-    # Use provided URL or default
-    content_url = image_url or "https://test-r2.zhizitech.org/test_discord_2.png"
+    # Determine content URLs
+    if image_urls:
+        # Use provided list of URLs
+        content = image_urls
+    elif image_url:
+        # Use single provided URL
+        content = [image_url]
+    else:
+        # Use default single image
+        content = ["https://test-r2.zhizitech.org/test_discord_2.png"]
     
     # Generate unique session_id if cache is disabled
     session_id = f"load_test_session_{request_index}" if disable_cache else "load_test_session"
@@ -432,7 +450,7 @@ def create_test_payload(
         "scene_analysis": True,
         "reply": True,
         "other_properties": "",  # Empty string is valid
-        "content": [content_url],
+        "content": content,
         "sign": sign,
     }
     
@@ -457,6 +475,10 @@ async def main():
     parser.add_argument("--health-check", action="store_true", help="Test health check endpoint")
     parser.add_argument("--image-url", type=str, help="Custom image URL to test (default: test_discord_2.png)")
     parser.add_argument("--disable-cache", action="store_true", help="Disable cache by using unique session IDs")
+    parser.add_argument("--multi-images", type=str, nargs='+', 
+                        help="Multiple image URLs for parallel processing test (e.g., --multi-images url1 url2 url3)")
+    parser.add_argument("--test-both-modes", action="store_true",
+                        help="Test both serial and parallel modes (requires --multi-images)")
     parser.add_argument("--sign-secret", type=str, default="", 
                         help="Sign secret for request validation (default from config.yaml)")
     parser.add_argument("--language", type=str, default="en", 
@@ -543,6 +565,7 @@ async def main():
         base_url=args.url,
         timeout=args.timeout,
         image_url=args.image_url,
+        image_urls=args.multi_images,
         disable_cache=args.disable_cache,
         sign_secret=args.sign_secret,
         language=args.language,
@@ -563,11 +586,108 @@ async def main():
     # Create payload
     payload = create_test_payload(
         image_url=args.image_url,
+        image_urls=args.multi_images,
         disable_cache=args.disable_cache,
         request_index=0,
         sign_secret=args.sign_secret,
         language=args.language,
     )
+    
+    # Test both serial and parallel modes if requested
+    if args.test_both_modes:
+        if not args.multi_images or len(args.multi_images) < 2:
+            print("\n⚠️  --test-both-modes requires --multi-images with at least 2 images")
+            return
+        
+        print("\n" + "=" * 80)
+        print("TESTING BOTH SERIAL AND PARALLEL MODES")
+        print("=" * 80)
+        print("\nThis will test the same workload twice:")
+        print("  1. Serial mode (USE_MERGE_STEP_PARALLEL=false)")
+        print("  2. Parallel mode (USE_MERGE_STEP_PARALLEL=true)")
+        print("\nNote: You need to manually change USE_MERGE_STEP_PARALLEL in .env")
+        print("      between the two tests, or use environment variable override.")
+        print("=" * 80)
+        
+        # Test 1: Serial mode
+        print("\n" + "=" * 80)
+        print("TEST 1: SERIAL MODE")
+        print("=" * 80)
+        print("\n⚠️  Make sure USE_MERGE_STEP_PARALLEL=false in your .env file")
+        print("    Or set environment variable: USE_MERGE_STEP_PARALLEL=false")
+        input("\nPress Enter when ready to start serial mode test...")
+        
+        tester.stats = LoadTestStats()  # Reset stats
+        await tester.run_concurrent_requests(
+            num_requests=args.requests,
+            concurrent=args.concurrent,
+            endpoint=args.endpoint,
+            payload=payload,
+        )
+        
+        serial_stats = {
+            'total_time': tester.stats.total_time,
+            'mean_response_time': statistics.mean(tester.stats.response_times) if tester.stats.response_times else 0,
+            'p50': sorted(tester.stats.response_times)[int(len(tester.stats.response_times) * 0.50)] if tester.stats.response_times else 0,
+            'throughput': tester.stats.total_requests / tester.stats.total_time if tester.stats.total_time > 0 else 0,
+            'success_rate': tester.stats.successful_requests / tester.stats.total_requests * 100 if tester.stats.total_requests > 0 else 0,
+        }
+        
+        tester.stats.print_summary()
+        
+        # Test 2: Parallel mode
+        print("\n" + "=" * 80)
+        print("TEST 2: PARALLEL MODE")
+        print("=" * 80)
+        print("\n⚠️  Make sure USE_MERGE_STEP_PARALLEL=true in your .env file")
+        print("    Or set environment variable: USE_MERGE_STEP_PARALLEL=true")
+        input("\nPress Enter when ready to start parallel mode test...")
+        
+        tester.stats = LoadTestStats()  # Reset stats
+        await tester.run_concurrent_requests(
+            num_requests=args.requests,
+            concurrent=args.concurrent,
+            endpoint=args.endpoint,
+            payload=payload,
+        )
+        
+        parallel_stats = {
+            'total_time': tester.stats.total_time,
+            'mean_response_time': statistics.mean(tester.stats.response_times) if tester.stats.response_times else 0,
+            'p50': sorted(tester.stats.response_times)[int(len(tester.stats.response_times) * 0.50)] if tester.stats.response_times else 0,
+            'throughput': tester.stats.total_requests / tester.stats.total_time if tester.stats.total_time > 0 else 0,
+            'success_rate': tester.stats.successful_requests / tester.stats.total_requests * 100 if tester.stats.total_requests > 0 else 0,
+        }
+        
+        tester.stats.print_summary()
+        
+        # Print comparison
+        print("\n" + "=" * 80)
+        print("SERIAL VS PARALLEL COMPARISON")
+        print("=" * 80)
+        print(f"\n{'Metric':<25} {'Serial':<20} {'Parallel':<20} {'Improvement':<15}")
+        print("-" * 80)
+        
+        print(f"{'Total Time':<25} {serial_stats['total_time']:>18.2f}s {parallel_stats['total_time']:>18.2f}s {(1 - parallel_stats['total_time']/serial_stats['total_time'])*100:>13.1f}%")
+        print(f"{'Mean Response Time':<25} {serial_stats['mean_response_time']:>18.3f}s {parallel_stats['mean_response_time']:>18.3f}s {(1 - parallel_stats['mean_response_time']/serial_stats['mean_response_time'])*100:>13.1f}%")
+        print(f"{'P50 Response Time':<25} {serial_stats['p50']:>18.3f}s {parallel_stats['p50']:>18.3f}s {(1 - parallel_stats['p50']/serial_stats['p50'])*100:>13.1f}%")
+        print(f"{'Throughput (req/s)':<25} {serial_stats['throughput']:>18.2f} {parallel_stats['throughput']:>18.2f} {(parallel_stats['throughput']/serial_stats['throughput'] - 1)*100:>13.1f}%")
+        print(f"{'Success Rate':<25} {serial_stats['success_rate']:>17.1f}% {parallel_stats['success_rate']:>17.1f}% {parallel_stats['success_rate'] - serial_stats['success_rate']:>13.1f}%")
+        
+        print("\n" + "=" * 80)
+        
+        # Determine if parallel is working
+        improvement = (1 - parallel_stats['mean_response_time']/serial_stats['mean_response_time'])*100
+        if improvement > 50:
+            print("✅ Parallel processing is working! Significant performance improvement detected.")
+        elif improvement > 20:
+            print("⚠️  Parallel processing shows some improvement, but less than expected.")
+        else:
+            print("❌ Parallel processing does NOT appear to be working. Response times are similar.")
+        
+        print("=" * 80)
+        
+        return
     
     # Run appropriate test
     if args.ramp_up:

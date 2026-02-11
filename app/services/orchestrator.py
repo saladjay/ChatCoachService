@@ -923,21 +923,11 @@ class Orchestrator:
             # Convert to SceneAnalysisResult (without strategies yet)
             scene = adapter.to_scene_analysis_result(parsed_json)
             
-            # Apply strategy selection based on recommended_scenario
-            from app.services.strategy_selector import get_strategy_selector
-            strategy_selector = get_strategy_selector()
-            
-            recommended_scenario = scene.recommended_scenario
-            selected_strategies = strategy_selector.select_strategies(
-                scenario=recommended_scenario,
-                count=3
-            )
-            
-            # Update scene with selected strategies
-            scene.recommended_strategies = selected_strategies
+            # Ensure scene has exactly 3 strategies
+            self._ensure_three_strategies(scene)
             
             logger.info(
-                f"Selected strategies for scenario '{recommended_scenario}': {selected_strategies}"
+                f"Ensured 3 strategies for scenario '{scene.recommended_scenario}': {scene.recommended_strategies}"
             )
             
             # Cache results using traditional field names for cache sharing
@@ -1467,6 +1457,54 @@ class Orchestrator:
                 conversation_id=request.conversation_id,
             ) from e
 
+    def _ensure_three_strategies(self, scene: SceneAnalysisResult) -> None:
+        """Ensure scene has exactly 3 recommended strategies.
+        
+        If strategies are missing or insufficient, select random strategies
+        based on the recommended_scenario. If the scenario has fewer than 3
+        strategies, pad with SAFE strategies.
+        
+        Args:
+            scene: SceneAnalysisResult to update (modified in place)
+        """
+        from app.services.strategy_selector import get_strategy_selector
+        
+        # Check if we already have 3 or more strategies
+        if scene.recommended_strategies and len(scene.recommended_strategies) >= 3:
+            # Ensure exactly 3 strategies (trim if more than 3)
+            scene.recommended_strategies = scene.recommended_strategies[:3]
+            logger.debug(
+                f"Scene already has 3 strategies: {scene.recommended_strategies}"
+            )
+            return
+        
+        strategy_selector = get_strategy_selector()
+        
+        # Select strategies based on recommended_scenario
+        selected_strategies = strategy_selector.select_strategies(
+            scenario=scene.recommended_scenario,
+            count=3
+        )
+        
+        # If we still don't have 3 strategies (edge case), pad with SAFE strategies
+        if len(selected_strategies) < 3:
+            logger.warning(
+                f"Only {len(selected_strategies)} strategies available for scenario "
+                f"'{scene.recommended_scenario}', padding with SAFE strategies"
+            )
+            safe_strategies = strategy_selector.select_strategies(
+                scenario="SAFE",
+                count=3 - len(selected_strategies)
+            )
+            selected_strategies.extend(safe_strategies)
+        
+        # Ensure exactly 3 strategies
+        scene.recommended_strategies = selected_strategies[:3]
+        
+        logger.info(
+            f"Filled strategies for scenario '{scene.recommended_scenario}': {scene.recommended_strategies}"
+        )
+
     async def _analyze_scene(
         self, 
         request: GenerateReplyRequest,
@@ -1479,7 +1517,7 @@ class Orchestrator:
             context: Context result with current intimacy level.
         
         Returns:
-            SceneAnalysisResult from scene analyzer.
+            SceneAnalysisResult from scene analyzer with 3 strategies.
         """
         input_data = SceneAnalysisInput(
             conversation_id=request.conversation_id,
@@ -1489,7 +1527,12 @@ class Orchestrator:
             intimacy_value=request.intimacy_value,  # 用户设置的亲密度
             current_intimacy_level=context.current_intimacy_level,  # 当前分析的亲密度
         )
-        return await self.scene_analyzer.analyze_scene(input_data)
+        scene = await self.scene_analyzer.analyze_scene(input_data)
+        
+        # Ensure scene has exactly 3 strategies
+        self._ensure_three_strategies(scene)
+        
+        return scene
 
     async def _infer_persona(
         self,
