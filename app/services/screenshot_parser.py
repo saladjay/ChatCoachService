@@ -192,6 +192,60 @@ class ScreenshotParserService:
         except Exception as e:
             logger.warning(f"[{session_id}] Failed to log screenshot dialogs: {e}")
 
+    def _repair_merge_step_bubble_bboxes(
+        self,
+        parsed_json: dict,
+        image_width: int,
+        image_height: int,
+    ) -> None:
+        screenshot_data = parsed_json.get("screenshot_parse")
+        if not isinstance(screenshot_data, dict):
+            return
+
+        bubbles = screenshot_data.get("bubbles")
+        if not isinstance(bubbles, list) or not bubbles:
+            return
+
+        for bubble in bubbles:
+            if not isinstance(bubble, dict):
+                continue
+
+            bbox_data = bubble.get("bbox")
+            if not isinstance(bbox_data, dict):
+                bubble["bbox"] = {"x1": 0.0, "y1": 0.0, "x2": 0.0, "y2": 0.0}
+                continue
+
+            try:
+                x1_raw = float(bbox_data.get("x1", 0))
+                y1_raw = float(bbox_data.get("y1", 0))
+                x2_raw = float(bbox_data.get("x2", 0))
+                y2_raw = float(bbox_data.get("y2", 0))
+            except Exception:
+                x1_raw = y1_raw = x2_raw = y2_raw = 0.0
+
+            x1 = min(x1_raw, x2_raw)
+            x2 = max(x1_raw, x2_raw)
+            y1 = min(y1_raw, y2_raw)
+            y2 = max(y1_raw, y2_raw)
+
+            if (x1 > 1.0 or y1 > 1.0 or x2 > 1.0 or y2 > 1.0) and image_width > 0 and image_height > 0:
+                x1 /= image_width
+                x2 /= image_width
+                y1 /= image_height
+                y2 /= image_height
+
+            x1 = max(0.0, min(1.0, x1))
+            y1 = max(0.0, min(1.0, y1))
+            x2 = max(0.0, min(1.0, x2))
+            y2 = max(0.0, min(1.0, y2))
+
+            bubble["bbox"] = {
+                "x1": x1,
+                "y1": y1,
+                "x2": x2,
+                "y2": y2,
+            }
+
     async def _race_multimodal_calls(
         self,
         prompt: str,
@@ -678,6 +732,11 @@ class ScreenshotParserService:
                     height=fetched_image.height
                 )
                 logger.info(f"llm response: {parsed_json}")
+                self._repair_merge_step_bubble_bboxes(
+                    parsed_json=parsed_json,
+                    image_width=fetched_image.width,
+                    image_height=fetched_image.height,
+                )
                 parsed_data = self.result_normalizer.normalize(
                     raw_json=parsed_json,
                     image_meta=image_meta,

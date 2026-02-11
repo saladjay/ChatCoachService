@@ -783,32 +783,17 @@ async def get_merge_step_analysis_result(
             
             if idx < len(bubbles):
                 bubble = bubbles[idx]
-                bbox_data = bubble.get("bbox", {})
-                
-                # Extract bbox coordinates and ensure correct min/max order
-                x1_raw = float(bbox_data.get("x1", 0))
-                y1_raw = float(bbox_data.get("y1", 0))
-                x2_raw = float(bbox_data.get("x2", 0))
-                y2_raw = float(bbox_data.get("y2", 0))
-                
-                # Ensure x1 <= x2 and y1 <= y2
-                x1 = min(x1_raw, x2_raw)
-                x2 = max(x1_raw, x2_raw)
-                y1 = min(y1_raw, y2_raw)
-                y2 = max(y1_raw, y2_raw)
-                
-                # Normalize coordinates if they are in pixel format
-                # (merge_step v3.0 returns pixel coordinates)
-                if x1 > 1.0 or y1 > 1.0 or x2 > 1.0 or y2 > 1.0:
-                    # Coordinates are in pixels, normalize to 0-1
-                    x1_norm = x1 / image_width if image_width > 0 else 0.0
-                    y1_norm = y1 / image_height if image_height > 0 else 0.0
-                    x2_norm = x2 / image_width if image_width > 0 else 0.0
-                    y2_norm = y2 / image_height if image_height > 0 else 0.0
-                    bbox = [x1_norm, y1_norm, x2_norm, y2_norm]
-                else:
-                    # Already normalized
-                    bbox = [x1, y1, x2, y2]
+                bbox_data = bubble.get("bbox")
+                if isinstance(bbox_data, dict):
+                    try:
+                        bbox = [
+                            float(bbox_data.get("x1", 0.0)),
+                            float(bbox_data.get("y1", 0.0)),
+                            float(bbox_data.get("x2", 0.0)),
+                            float(bbox_data.get("y2", 0.0)),
+                        ]
+                    except Exception:
+                        bbox = [0.0, 0.0, 0.0, 0.0]
             
             dialog_item = DialogItem(
                 position=bbox,
