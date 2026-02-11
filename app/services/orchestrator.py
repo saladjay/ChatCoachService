@@ -213,6 +213,60 @@ class Orchestrator:
         except Exception as e:
             logger.warning(f"[{session_id}] Failed to log merge_step extraction: {e}", exc_info=True)
 
+    def _repair_merge_step_bubble_bboxes(
+        self,
+        parsed_json: dict,
+        image_width: int,
+        image_height: int,
+    ) -> None:
+        screenshot_data = parsed_json.get("screenshot_parse")
+        if not isinstance(screenshot_data, dict):
+            return
+
+        bubbles = screenshot_data.get("bubbles")
+        if not isinstance(bubbles, list) or not bubbles:
+            return
+
+        for bubble in bubbles:
+            if not isinstance(bubble, dict):
+                continue
+
+            bbox_data = bubble.get("bbox")
+            if not isinstance(bbox_data, dict):
+                bubble["bbox"] = {"x1": 0.0, "y1": 0.0, "x2": 0.0, "y2": 0.0}
+                continue
+
+            try:
+                x1_raw = float(bbox_data.get("x1", 0))
+                y1_raw = float(bbox_data.get("y1", 0))
+                x2_raw = float(bbox_data.get("x2", 0))
+                y2_raw = float(bbox_data.get("y2", 0))
+            except Exception:
+                x1_raw = y1_raw = x2_raw = y2_raw = 0.0
+
+            x1 = min(x1_raw, x2_raw)
+            x2 = max(x1_raw, x2_raw)
+            y1 = min(y1_raw, y2_raw)
+            y2 = max(y1_raw, y2_raw)
+
+            if (x1 > 1.0 or y1 > 1.0 or x2 > 1.0 or y2 > 1.0) and image_width > 0 and image_height > 0:
+                x1 /= image_width
+                x2 /= image_width
+                y1 /= image_height
+                y2 /= image_height
+
+            x1 = max(0.0, min(1.0, x1))
+            y1 = max(0.0, min(1.0, y1))
+            x2 = max(0.0, min(1.0, x2))
+            y2 = max(0.0, min(1.0, y2))
+
+            bubble["bbox"] = {
+                "x1": x1,
+                "y1": y1,
+                "x2": x2,
+                "y2": y2,
+            }
+
     async def scenario_analysis(
         self,
         request: GenerateReplyRequest
@@ -390,6 +444,12 @@ class Orchestrator:
                     "conversation_analysis": {},  # Not needed for bbox reconstruction
                     "scenario_decision": {},  # Not needed for bbox reconstruction
                 }
+
+                self._repair_merge_step_bubble_bboxes(
+                    parsed_json=cached_parsed_json,
+                    image_width=image_width,
+                    image_height=image_height,
+                )
                 
                 return context, scene, cached_parsed_json  # Return reconstructed parsed_json
             
@@ -513,6 +573,12 @@ class Orchestrator:
                     )
                     
                     logger.info(f"Finished calling _log_merge_step_extraction")
+
+                    self._repair_merge_step_bubble_bboxes(
+                        parsed_json=parsed_json,
+                        image_width=image_width,
+                        image_height=image_height,
+                    )
                     
                 except json.JSONDecodeError as e:
                     logger.error(f"Failed to parse JSON from merge_step: {e}")
@@ -1037,7 +1103,9 @@ class Orchestrator:
             
             # Phase 2: Step 3.5: Plan strategies (optional, if strategy_planner available)
             strategy_plan = None
-            if self.strategy_planner:
+            if settings.no_strategy_planner:
+                strategy_plan = None
+            elif self.strategy_planner:
                 cached_strategy = await self._get_cached_payload(request, "strategy_plan")
                 if cached_strategy:
                     from app.services.strategy_planner import StrategyPlanOutput
@@ -1462,6 +1530,9 @@ class Orchestrator:
         Returns:
             Strategy plan output
         """
+        if settings.no_strategy_planner:
+            return None
+
         from app.services.strategy_planner import StrategyPlanInput
         
         input_data = StrategyPlanInput(
