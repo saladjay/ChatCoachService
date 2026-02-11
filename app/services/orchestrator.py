@@ -1672,6 +1672,8 @@ class Orchestrator:
                     reply_text=reply_result.text,
                     intimacy_level=scene.intimacy_level,
                     persona=persona,
+                    context=context,
+                    scene=scene,
                 )
                 
                 intimacy_result = await self._execute_step(
