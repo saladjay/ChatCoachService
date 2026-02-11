@@ -46,6 +46,7 @@ class GenerateReplyRequest(BaseModel):
     intimacy_value: int = Field(default=50, ge=0, le=100, description="the intimacy of user's setting")
     persona: str = Field(default="", description="user's persona")
     scene: int = Field(default=1, ge=1, le=3, description="scene")
+    reply_sentence: str = Field(default="", description="Explicitly specified reply sentence (Last Message)")  # 新增
 
 
 class GenerateReplyResponse(BaseModel):

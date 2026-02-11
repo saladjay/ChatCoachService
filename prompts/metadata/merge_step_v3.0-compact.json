@@ -1,0 +1,13 @@
+{
+  "prompt_id": "merge_step_v3.0-compact",
+  "prompt_type": "merge_step",
+  "version": "v3.0-compact",
+  "created_at": "2026-02-10T15:10:37.467980",
+  "author": "cli_user",
+  "description": "",
+  "tags": [],
+  "token_estimate": 0,
+  "performance_notes": "",
+  "is_active": true,
+  "parent_version": null
+}

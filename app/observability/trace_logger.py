@@ -37,6 +37,10 @@ class TraceLogger:
         """Check if prompts should be logged based on trace settings."""
         return self.enabled() and getattr(settings.trace, 'log_llm_prompt', False)
 
+    def should_log_timing(self) -> bool:
+        """Check if timing logs should be logged based on trace settings."""
+        return self.enabled() and getattr(settings.trace, 'log_timing', False)
+
     def _should_log(self, level: str | None) -> bool:
         if not self.enabled():
             return False
