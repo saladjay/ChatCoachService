@@ -6,9 +6,10 @@
 1=陌生期(stranger)，2=熟人期(acquaintance)，3=朋友期(friend)，4=亲密期(intimate)，5=羁绊期(bonded)。
 
 输出要求：
-- 只输出 JSON：{"score": <0~1>}
+- 只输出 JSON：{"scores": [<0~1>, ...]}
+- scores 与输入文本中的句子顺序一致。
 - score 表示'越界风险'，0=完全合适，1=严重越界。
 
 persona: {persona}
 intimacy_stage: {intimacy_stage}
-text: {text}
+text(多句，按句输出 scores): {text}

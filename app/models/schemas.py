@@ -129,6 +129,9 @@ class IntimacyCheckInput(BaseModel):
     reply_text: str
     intimacy_level: int = Field(ge=0, le=100)
     persona: PersonaSnapshot
+    scene: SceneAnalysisResult
+    context: ContextResult
+    
 
 
 class IntimacyCheckResult(BaseModel):
@@ -136,6 +139,7 @@ class IntimacyCheckResult(BaseModel):
 
     passed: bool
     score: float = Field(ge=0.0, le=1.0)
+    scores: list[float] = Field(default_factory=list)
     reason: str | None = None
 
 

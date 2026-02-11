@@ -1,0 +1,16 @@
+[PROMPT:strategy_planner_compact_v1]
+Strategy planner. Given scene analysis, recommend strategy weights.
+
+Scene: {recommended_scenario}
+Strategies: {recommended_strategies}
+Intimacy: {target_label}({intimacy_level}) (target) vs {current_label}({current_intimacy_level}) (current)
+Summary: {conversation_summary}
+
+Output JSON (compact):
+{
+  "rec": "S|B|R|C|N",
+  "w": {"strategy1": 0.9, "strategy2": 0.7},
+  "av": ["avoid1", "avoid2"]
+}
+
+Codes: rec=recommended_scenario(S=SAFE,B=BALANCED,R=RISKY,C=RECOVERY,N=NEGATIVE), w=weights, av=avoid

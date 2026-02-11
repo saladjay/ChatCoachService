@@ -1,0 +1,13 @@
+{
+  "prompt_id": "strategy_planning_v2.0-compact",
+  "prompt_type": "strategy_planning",
+  "version": "v2.0-compact",
+  "created_at": "2026-01-28T17:30:00.000000",
+  "author": "system",
+  "description": "Compact strategy planning prompt for token efficiency",
+  "tags": ["compact", "optimized", "token-efficient"],
+  "token_estimate": 190,
+  "performance_notes": "Compact prompt for strategy planning layer.",
+  "is_active": true,
+  "parent_version": "strategy_planning_v1.0-original"
+}

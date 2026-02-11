@@ -25,6 +25,7 @@ from app.services.llm_adapter import BaseLLMAdapter, LLMCall
 from app.models.schemas import SceneAnalysisResult
 from app.models.schemas_compact import StrategyPlanCompact
 from app.services.schema_expander import SchemaExpander
+from app.services.prompt_manager import get_prompt_manager, PromptType, PromptVersion
 from user_profile.intimacy import intimacy_label_en
 
 
@@ -91,6 +92,7 @@ class StrategyPlanner:
         self.provider = provider
         self.model = model
         self.use_compact = use_compact
+        self._prompt_manager = get_prompt_manager()
     
     async def plan_strategies(self, input: StrategyPlanInput) -> StrategyPlanOutput:
         """Plan conversation strategies based on scene analysis.
@@ -138,51 +140,35 @@ class StrategyPlanner:
         current_label = intimacy_label_en(int(input.current_intimacy_level))
         
         if self.use_compact:
-            # Ultra-compact version
-            prompt = f"""[PROMPT:strategy_planner_compact_v1]
-Strategy planner. Given scene analysis, recommend strategy weights.
-
-Scene: {scene.recommended_scenario}
-Strategies: {', '.join(scene.recommended_strategies[:3])}
-Intimacy: {target_label}({input.intimacy_level}) (target) vs {current_label}({input.current_intimacy_level}) (current)
-Summary: {input.conversation_summary[:100]}
-
-Output JSON (compact):
-{{
-  "rec": "S|B|R|C|N",
-  "w": {{"strategy1": 0.9, "strategy2": 0.7}},
-  "av": ["avoid1", "avoid2"]
-}}
-
-Codes: rec=recommended_scenario(S=SAFE,B=BALANCED,R=RISKY,C=RECOVERY,N=NEGATIVE), w=weights, av=avoid
-"""
+            prompt_template = self._prompt_manager.get_prompt_version(
+                PromptType.STRATEGY_PLANNING,
+                PromptVersion.V2_COMPACT,
+            )
+            prompt_template = (prompt_template or "").strip()
+            prompt = prompt_template.format(
+                recommended_scenario=scene.recommended_scenario,
+                recommended_strategies=", ".join(scene.recommended_strategies[:3]),
+                target_label=target_label,
+                intimacy_level=input.intimacy_level,
+                current_label=current_label,
+                current_intimacy_level=input.current_intimacy_level,
+                conversation_summary=input.conversation_summary[:100],
+            )
         else:
-            # Standard version (for debugging)
-            prompt = f"""[PROMPT:strategy_planner_full_v1]
-You are a conversation strategy planner.
-
-Based on the scene analysis, recommend specific strategy weights for reply generation.
-
-## Scene Analysis
-- Recommended Scenario: {scene.recommended_scenario}
-- Recommended Strategies: {', '.join(scene.recommended_strategies)}
-- Intimacy Gap: Target={target_label}({input.intimacy_level}), Current={current_label}({input.current_intimacy_level})
-
-## Conversation Summary
-{input.conversation_summary}
-
-## Output Format (JSON)
-{{
-  "recommended_scenario": "SAFE|BALANCED|RISKY|RECOVERY|NEGATIVE",
-  "strategy_weights": {{
-    "strategy_name": 0.9,
-    "another_strategy": 0.7
-  }},
-  "avoid_strategies": ["strategy_to_avoid"]
-}}
-
-Provide weights (0-1) for the top 3-5 strategies to use.
-"""
+            prompt_template = self._prompt_manager.get_prompt_version(
+                PromptType.STRATEGY_PLANNING,
+                PromptVersion.V1_ORIGINAL,
+            )
+            prompt_template = (prompt_template or "").strip()
+            prompt = prompt_template.format(
+                recommended_scenario=scene.recommended_scenario,
+                recommended_strategies=", ".join(scene.recommended_strategies),
+                target_label=target_label,
+                intimacy_level=input.intimacy_level,
+                current_label=current_label,
+                current_intimacy_level=input.current_intimacy_level,
+                conversation_summary=input.conversation_summary,
+            )
         
         return prompt
     

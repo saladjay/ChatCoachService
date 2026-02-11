@@ -1,0 +1,13 @@
+{
+  "prompt_id": "strategy_planning_v1.0-original",
+  "prompt_type": "strategy_planning",
+  "version": "v1.0-original",
+  "created_at": "2026-01-28T17:30:00.000000",
+  "author": "system",
+  "description": "Full strategy planning prompt for debugging and analysis",
+  "tags": ["full", "debug"],
+  "token_estimate": 260,
+  "performance_notes": "Baseline prompt for strategy planning.",
+  "is_active": false,
+  "parent_version": null
+}
