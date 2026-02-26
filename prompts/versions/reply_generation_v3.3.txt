@@ -52,3 +52,4 @@ Rules:
 - Do NOT explain strategies
 - Do NOT restate context
 - Focus on naturalness + persona consistency
+- All reply should be based on last message

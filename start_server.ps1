@@ -6,11 +6,78 @@ Write-Host "Starting ChatCoach API Server" -ForegroundColor Cyan
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host ""
 
+# Check for existing server processes and kill them
+Write-Host "Checking for existing server processes..." -ForegroundColor Yellow
+$existingProcesses = Get-Process -Name "python" -ErrorAction SilentlyContinue | Where-Object {
+    $_.CommandLine -like "*uvicorn*app.main:app*" -or 
+    $_.CommandLine -like "*uvicorn app.main:app*"
+}
+
+if ($existingProcesses) {
+    Write-Host "Found $($existingProcesses.Count) existing server process(es)" -ForegroundColor Yellow
+    foreach ($proc in $existingProcesses) {
+        Write-Host "  Killing process $($proc.Id) (Port may be in use)" -ForegroundColor Yellow
+        try {
+            Stop-Process -Id $proc.Id -Force
+            Write-Host "  ✓ Process $($proc.Id) terminated" -ForegroundColor Green
+        } catch {
+            Write-Host "  ✗ Failed to kill process $($proc.Id): $_" -ForegroundColor Red
+        }
+    }
+    # Wait a moment for ports to be released
+    Start-Sleep -Seconds 1
+} else {
+    Write-Host "✓ No existing server processes found" -ForegroundColor Green
+}
+
+# Additional check: Kill any process using port 8000
+Write-Host "Checking port 8000..." -ForegroundColor Yellow
+$portProcess = Get-NetTCPConnection -LocalPort 8000 -ErrorAction SilentlyContinue | Select-Object -First 1
+if ($portProcess) {
+    $pid = $portProcess.OwningProcess
+    Write-Host "  Port 8000 is in use by process $pid" -ForegroundColor Yellow
+    try {
+        Stop-Process -Id $pid -Force
+        Write-Host "  ✓ Process $pid terminated" -ForegroundColor Green
+        Start-Sleep -Seconds 1
+    } catch {
+        Write-Host "  ✗ Failed to kill process $pid: $_" -ForegroundColor Red
+        Write-Host "  Please manually kill the process or use a different port" -ForegroundColor Yellow
+    }
+} else {
+    Write-Host "✓ Port 8000 is available" -ForegroundColor Green
+}
+Write-Host ""
+
+# Check if .venv exists, if not run uv sync
+if (-not (Test-Path ".venv")) {
+    Write-Host "Virtual environment not found. Running uv sync..." -ForegroundColor Yellow
+    $uvCommand = Get-Command uv -ErrorAction SilentlyContinue
+    if ($uvCommand) {
+        uv sync
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "✓ Virtual environment created successfully" -ForegroundColor Green
+        } else {
+            Write-Host "Error: Failed to create virtual environment" -ForegroundColor Red
+            Write-Host "Please run 'uv sync' manually" -ForegroundColor Yellow
+            exit 1
+        }
+    } else {
+        Write-Host "Error: uv is not installed" -ForegroundColor Red
+        Write-Host "Please install uv first: https://docs.astral.sh/uv/getting-started/installation/" -ForegroundColor Yellow
+        exit 1
+    }
+    Write-Host ""
+}
+
 # Activate virtual environment if it exists
 if (Test-Path ".venv\Scripts\Activate.ps1") {
     Write-Host "Activating virtual environment..." -ForegroundColor Yellow
     & .\.venv\Scripts\Activate.ps1
     Write-Host "✓ Virtual environment activated" -ForegroundColor Green
+} else {
+    Write-Host "Warning: Virtual environment activation script not found" -ForegroundColor Yellow
+    Write-Host "Continuing without virtual environment..." -ForegroundColor Yellow
 }
 
 # Check if uvicorn is installed (support both pip and uv)

@@ -7,12 +7,91 @@ echo "Starting ChatCoach API Server"
 echo "========================================"
 echo ""
 
+# Check for existing server processes and kill them
+echo "Checking for existing server processes..."
+existing_pids=$(ps aux | grep -E "python.*uvicorn.*app\.main:app" | grep -v grep | awk '{print $2}')
+
+if [ -n "$existing_pids" ]; then
+    echo "Found existing server process(es): $existing_pids"
+    for pid in $existing_pids; do
+        echo "  Killing process $pid (Port may be in use)"
+        if kill -9 "$pid" 2>/dev/null; then
+            echo "  ✓ Process $pid terminated"
+        else
+            echo "  ✗ Failed to kill process $pid (may require sudo)"
+        fi
+    done
+    # Wait a moment for ports to be released
+    sleep 1
+else
+    echo "✓ No existing server processes found"
+fi
+
+# Additional check: Kill any process using port 8000
+echo "Checking port 8000..."
+if command -v lsof > /dev/null 2>&1; then
+    port_pid=$(lsof -ti:8000 2>/dev/null)
+    if [ -n "$port_pid" ]; then
+        echo "  Port 8000 is in use by process $port_pid"
+        if kill -9 "$port_pid" 2>/dev/null; then
+            echo "  ✓ Process $port_pid terminated"
+            sleep 1
+        else
+            echo "  ✗ Failed to kill process $port_pid (may require sudo)"
+            echo "  Please manually kill the process: sudo kill -9 $port_pid"
+        fi
+    else
+        echo "✓ Port 8000 is available"
+    fi
+elif command -v netstat > /dev/null 2>&1; then
+    # Fallback to netstat if lsof is not available
+    port_pid=$(netstat -tlnp 2>/dev/null | grep ":8000 " | awk '{print $7}' | cut -d'/' -f1)
+    if [ -n "$port_pid" ]; then
+        echo "  Port 8000 is in use by process $port_pid"
+        if kill -9 "$port_pid" 2>/dev/null; then
+            echo "  ✓ Process $port_pid terminated"
+            sleep 1
+        else
+            echo "  ✗ Failed to kill process $port_pid (may require sudo)"
+            echo "  Please manually kill the process: sudo kill -9 $port_pid"
+        fi
+    else
+        echo "✓ Port 8000 is available"
+    fi
+else
+    echo "Warning: Cannot check port 8000 (lsof/netstat not found)"
+fi
+echo ""
+
+# Check if .venv exists, if not run uv sync
+if [ ! -d ".venv" ]; then
+    echo "Virtual environment not found. Running uv sync..."
+    if command -v uv > /dev/null 2>&1; then
+        uv sync
+        if [ $? -eq 0 ]; then
+            echo "✓ Virtual environment created successfully"
+        else
+            echo "Error: Failed to create virtual environment"
+            echo "Please run 'uv sync' manually"
+            exit 1
+        fi
+    else
+        echo "Error: uv is not installed"
+        echo "Please install uv first: https://docs.astral.sh/uv/getting-started/installation/"
+        exit 1
+    fi
+    echo ""
+fi
+
 # Activate virtual environment if it exists
 if [ -f ".venv/bin/activate" ]; then
     echo "Activating virtual environment..."
     # shellcheck disable=SC1091
     . ./.venv/bin/activate
     echo "✓ Virtual environment activated"
+else
+    echo "Warning: Virtual environment activation script not found"
+    echo "Continuing without virtual environment..."
 fi
 
 script_args=()

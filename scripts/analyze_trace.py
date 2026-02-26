@@ -85,9 +85,9 @@ def extract_llm_calls(entries: List[Dict]) -> List[Dict]:
             
             llm_calls.append({
                 "timestamp": entry.get("ts"),
-                "task_type": entry.get("task_type"),
-                "provider": entry.get("provider"),
-                "model": entry.get("model"),
+                "task_type": entry.get("task_type") or "unknown",
+                "provider": entry.get("provider") or "unknown",
+                "model": entry.get("model") or "unknown",
                 "input_tokens": entry.get("input_tokens", 0),
                 "output_tokens": entry.get("output_tokens", 0),
                 "total_tokens": entry.get("input_tokens", 0) + entry.get("output_tokens", 0),
@@ -99,27 +99,67 @@ def extract_llm_calls(entries: List[Dict]) -> List[Dict]:
                 "caller_func": caller_func,
                 "response": entry.get("text", "")
             })
-        # Also collect from step_end events (screenshot parser)
+        # Also collect from step_end events (screenshot parser and other DIRECT LLM-based steps)
+        # IMPORTANT: Only include step_end if it has LLM metadata at TOP LEVEL
+        # Do NOT include step_end with LLM metadata in 'result' field, as those are wrappers
+        # around llm_call_end events and would cause double counting
         elif entry.get("type") == "step_end":
-            step_id = entry.get("step_id")
-            prompt = prompts_by_step_id.get(step_id, "")
+            # Check if this step_end contains DIRECT LLM call information (top level only)
+            has_direct_llm_metadata = (
+                entry.get("provider") or 
+                entry.get("model") or 
+                entry.get("input_tokens") or 
+                entry.get("output_tokens") or 
+                entry.get("cost_usd")
+            )
             
-            llm_calls.append({
-                "timestamp": entry.get("ts"),
-                "task_type": entry.get("task_type"),
-                "provider": entry.get("provider"),
-                "model": entry.get("model"),
-                "input_tokens": entry.get("input_tokens", 0),
-                "output_tokens": entry.get("output_tokens", 0),
-                "total_tokens": entry.get("input_tokens", 0) + entry.get("output_tokens", 0),
-                "cost_usd": entry.get("cost_usd", 0),
-                "latency_ms": entry.get("duration_ms", 0),
-                "prompt": prompt,
-                "prompt_version": None,
-                "caller_module": entry.get("step_name"),
-                "caller_func": None,
-                "response": ""
-            })
+            # Only add if this is a DIRECT LLM call (not a wrapper)
+            # Examples of direct LLM calls: merge_step_llm (has top-level metadata)
+            # Examples of wrappers: reply_generation_attempt_1 (metadata in result field)
+            if has_direct_llm_metadata:
+                step_id = entry.get("step_id")
+                prompt = prompts_by_step_id.get(step_id, "")
+                
+                # Get metadata from top level
+                provider = entry.get("provider") or "unknown"
+                model = entry.get("model") or "unknown"
+                input_tokens = entry.get("input_tokens", 0)
+                output_tokens = entry.get("output_tokens", 0)
+                cost_usd = entry.get("cost_usd", 0.0)
+                
+                # Infer task_type from step_name if not provided
+                task_type = entry.get("task_type")
+                if not task_type:
+                    step_name = entry.get("step_name", "")
+                    if "merge_step" in step_name:
+                        task_type = "merge_step"
+                    elif "reply_generation" in step_name or "generation" in step_name:
+                        task_type = "generation"
+                    elif "scene" in step_name:
+                        task_type = "scene"
+                    elif "persona" in step_name:
+                        task_type = "persona"
+                    elif "context" in step_name:
+                        task_type = "context"
+                    else:
+                        task_type = "unknown"
+                
+                llm_calls.append({
+                    "timestamp": entry.get("ts"),
+                    "task_type": task_type,
+                    "provider": provider,
+                    "model": model,
+                    "input_tokens": input_tokens,
+                    "output_tokens": output_tokens,
+                    "total_tokens": input_tokens + output_tokens,
+                    "cost_usd": cost_usd,
+                    "latency_ms": entry.get("duration_ms", 0),
+                    "prompt": prompt,
+                    "prompt_version": None,
+                    "caller_module": entry.get("step_name") or "unknown",
+                    "caller_func": None,
+                    "response": ""
+                })
     
     return llm_calls
 

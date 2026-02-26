@@ -1,4 +1,4 @@
-"""Orchestrator service for coordinating the conversation generation flow.
+﻿"""Orchestrator service for coordinating the conversation generation flow.
 
 This module implements the central orchestration logic that:
 - Coordinates sub-module calls in sequence
@@ -82,7 +82,7 @@ class ExecutionContext:
 class Orchestrator:
     """Central orchestration service for conversation generation.
     
-    Coordinates the flow: Context_Builder → Scene_Analysis → 
+    Coordinates the flow: Context_Builder → Scene_Analysis →
     Persona_Inference → Reply_Generation → Intimacy_Check
     
     Implements retry logic, fallback strategies, and cost tracking.
@@ -129,14 +129,150 @@ class Orchestrator:
         self.config = config or OrchestratorConfig()
         self.billing_config = billing_config or BillingConfig()
         self.strategy_planner = strategy_planner
+        
+        # Background task management
+        self._background_tasks: list[asyncio.Task] = []
+        self._shutdown_event = asyncio.Event()
 
+    def _log_merge_step_extraction(
+        self,
+        session_id: str,
+        strategy: str,
+        model: str,
+        parsed_json: dict
+    ) -> None:
+        """Log extracted conversation details from merge_step analysis.
+        
+        Args:
+            session_id: Session ID for logging
+            strategy: Strategy name (multimodal/premium)
+            model: Model name
+            parsed_json: Parsed merge_step JSON response
+        """
+        # Check if logging is enabled
+        from app.core.config import settings
+        if not settings.debug_config.log_merge_step_extraction:
+            return
+        
+        try:
+            # Extract bubbles from screenshot_parse section
+            screenshot_parse = parsed_json.get("screenshot_parse", {})
+            bubbles = screenshot_parse.get("bubbles", [])
+            participants = screenshot_parse.get("participants", {})
+            
+            # Log participants info
+            self_info = participants.get("self", {})
+            other_info = participants.get("other", {})
+            user_nickname = self_info.get("nickname", "Unknown")
+            target_nickname = other_info.get("nickname", "Unknown")
+            
+            logger.info(
+                f"[{session_id}] merge_step [{strategy}|{model}] Participants: "
+                f"User='{user_nickname}', Target='{target_nickname}'"
+            )
+            
+            # Sort bubbles by y-coordinate (top to bottom)
+            sorted_bubbles = sorted(bubbles, key=lambda b: b.get("bbox", {}).get("y1", 0))
+            
+            # Get layout info to understand role mapping
+            layout = screenshot_parse.get("layout", {})
+            left_role = layout.get("left_role", "unknown")
+            right_role = layout.get("right_role", "unknown")
+            
+            # Log bubble details with layout context
+            logger.info(
+                f"[{session_id}] FINAL [{strategy}|{model}] Layout: left={left_role}, right={right_role}"
+            )
+            logger.info(
+                f"[{session_id}] FINAL [{strategy}|{model}] Extracted {len(sorted_bubbles)} bubbles (sorted top->bottom):"
+            )
+            
+            for idx, bubble in enumerate(sorted_bubbles, 1):
+                sender = bubble.get("sender", "unknown")
+                text = bubble.get("text", "")
+                logger.info(f"[{__name__}:_log_merge_step_extraction:L{195}] Original bubble text before truncation: {text}")
+                column = bubble.get("column", "unknown")
+                bbox = bubble.get("bbox", {})
+                x1 = bbox.get("x1", 0)
+                y1 = bbox.get("y1", 0)
+                x2 = bbox.get("x2", 0)
+                y2 = bbox.get("y2", 0)
+                
+                # Show expected role based on layout
+                expected_role = left_role if column == "left" else right_role
+                role_match = "OK" if sender == expected_role else "MISMATCH"
+                
+                # Truncate long messages for readability (keep emoji in content)
+                display_text = text[:100] + "..." if len(text) > 100 else text
+                
+                logger.info(
+                    f"[{session_id}]   [{idx}] {sender}({column}) {role_match} "
+                    f"bbox=[{x1},{y1},{x2},{y2}]: {display_text}"
+                )
+                
+        except Exception as e:
+            logger.warning(f"[{session_id}] Failed to log merge_step extraction: {e}", exc_info=True)
+
+    def _repair_merge_step_bubble_bboxes(
+        self,
+        parsed_json: dict,
+        image_width: int,
+        image_height: int,
+    ) -> None:
+        screenshot_data = parsed_json.get("screenshot_parse")
+        if not isinstance(screenshot_data, dict):
+            return
+
+        bubbles = screenshot_data.get("bubbles")
+        if not isinstance(bubbles, list) or not bubbles:
+            return
+
+        for bubble in bubbles:
+            if not isinstance(bubble, dict):
+                continue
+
+            bbox_data = bubble.get("bbox")
+            if not isinstance(bbox_data, dict):
+                bubble["bbox"] = {"x1": 0.0, "y1": 0.0, "x2": 0.0, "y2": 0.0}
+                continue
+
+            try:
+                x1_raw = float(bbox_data.get("x1", 0))
+                y1_raw = float(bbox_data.get("y1", 0))
+                x2_raw = float(bbox_data.get("x2", 0))
+                y2_raw = float(bbox_data.get("y2", 0))
+            except Exception:
+                x1_raw = y1_raw = x2_raw = y2_raw = 0.0
+
+            x1 = min(x1_raw, x2_raw)
+            x2 = max(x1_raw, x2_raw)
+            y1 = min(y1_raw, y2_raw)
+            y2 = max(y1_raw, y2_raw)
+
+            if (x1 > 1.0 or y1 > 1.0 or x2 > 1.0 or y2 > 1.0) and image_width > 0 and image_height > 0:
+                x1 /= image_width
+                x2 /= image_width
+                y1 /= image_height
+                y2 /= image_height
+
+            x1 = max(0.0, min(1.0, x1))
+            y1 = max(0.0, min(1.0, y1))
+            x2 = max(0.0, min(1.0, x2))
+            y2 = max(0.0, min(1.0, y2))
+
+            bubble["bbox"] = {
+                "x1": x1,
+                "y1": y1,
+                "x2": x2,
+                "y2": y2,
+            }
 
     async def scenario_analysis(
         self,
         request: GenerateReplyRequest
     ) -> SceneAnalysisResult:
         """Analyze the conversation scenario.
-        Flow: Context_Builder → Scene_Analysis
+        Flow: Context_Builder Scene_Analysis
 
         """
         if not await self.billing_service.check_quota(request.user_id):
@@ -167,7 +303,7 @@ class Orchestrator:
                 )
                 await self._append_cache_event(request, "context_analysis", context.model_dump(mode="json"))
             
-            # Step 2: Analyze scene (传递 context 以获取当前亲密度)
+            # Step 2: Analyze scene (传context 以获取当前亲密度)
             cached_scene = await self._get_cached_payload(request, "scene_analysis")
             if cached_scene:
                 scene = SceneAnalysisResult(**cached_scene)
@@ -177,7 +313,7 @@ class Orchestrator:
                     "scene_analysis",
                     self._analyze_scene,
                     request,
-                    context,  # 传递 context
+                    context,  # 传context
                 )
                 await self._append_cache_event(request, "scene_analysis", scene.model_dump(mode="json"))
             return scene
@@ -193,6 +329,691 @@ class Orchestrator:
             logger.exception(f"Orchestration error: {e}")
             raise OrchestrationError(
                 message="An error occurred during generation",
+                original_error=e,
+            ) from e
+
+    async def merge_step_analysis(
+        self,
+        request: GenerateReplyRequest,
+        image_url: str,
+        image_base64: str,
+        image_width: int,
+        image_height: int,
+    ) -> tuple[ContextResult, SceneAnalysisResult, dict]:
+        """
+        Perform merged analysis using merge_step prompt.
+        
+        This function combines screenshot parsing, context building, and scenario analysis
+        into a single LLM call for improved performance.
+        
+        Flow: Single LLM call Parse output Apply strategy selection Cache results
+        
+        Args:
+            request: GenerateReplyRequest with user info
+            image_url: Original image URL (used when image_format=url)
+            image_base64: Base64-encoded screenshot image (used when image_format=base64)
+            image_width: Image width in pixels
+            image_height: Image height in pixels
+            
+        Returns:
+            Tuple of (ContextResult, SceneAnalysisResult, parsed_json)
+            The parsed_json contains the raw merge_step output including bbox coordinates
+            
+        Raises:
+            QuotaExceededError: If user quota is exceeded
+            OrchestrationError: For other orchestration failures
+        """
+        if not await self.billing_service.check_quota(request.user_id):
+            logger.warning(f"Quota exceeded for user {request.user_id}")
+            raise QuotaExceededError(
+                message=f"User {request.user_id} has exceeded their quota",
+                user_id=request.user_id,
+            )
+        
+        # Initialize execution context
+        exec_ctx = ExecutionContext(
+            user_id=request.user_id,
+            conversation_id=request.conversation_id,
+            quality=request.quality,
+        )
+        
+        try:
+            # Check cache first using traditional field names for cache sharing
+            logger.info(f"[{request.conversation_id}] merge_step_analysis: force_regenerate={request.force_regenerate}, resource={request.resource}, resources={request.resources}, scene={request.scene}")
+            
+            if request.force_regenerate:
+                logger.info(f"[{request.conversation_id}] Skipping cache due to force_regenerate=True")
+            
+            cached_context = await self._get_cached_payload(request, "context_analysis")
+            cached_scene = await self._get_cached_payload(request, "scene_analysis")
+            cached_screenshot_parse = await self._get_cached_payload(request, "screenshot_parse")
+            
+            # Also try to read from image_result for backward compatibility with non-merge_step
+            if not cached_screenshot_parse:
+                cached_image_result = await self._get_cached_payload(request, "image_result")
+                if cached_image_result:
+                    logger.info(f"[{request.conversation_id}] Found image_result cache, converting to screenshot_parse format")
+                    # Convert ImageResult format to screenshot_parse format
+                    dialogs = cached_image_result.get("dialogs", [])
+                    bubbles = []
+                    for dialog in dialogs:
+                        position = dialog.get("position", [0, 0, 0, 0])
+                        bubbles.append({
+                            "sender": dialog.get("speaker", "user"),
+                            "text": dialog.get("text", ""),
+                            "bbox": {
+                                "x1": position[0] if len(position) > 0 else 0,
+                                "y1": position[1] if len(position) > 1 else 0,
+                                "x2": position[2] if len(position) > 2 else 0,
+                                "y2": position[3] if len(position) > 3 else 0,
+                            }
+                        })
+                    cached_screenshot_parse = {
+                        "screenshot_parse": {
+                            "bubbles": bubbles
+                        }
+                    }
+            
+            if cached_context and cached_scene:
+                if settings.debug_config.log_cache_operations:
+                    logger.error(f"[{request.conversation_id}] ===== CACHE READ DEBUG =====")
+                    logger.error(f"[{request.conversation_id}] Using cached merge_step results: session_id={request.conversation_id}, resource={request.resource}, resources={request.resources}, scene={request.scene}")
+                    logger.error(f"[{request.conversation_id}] Cached strategy={cached_context.get('_strategy')}, model={cached_context.get('_model')}")
+                    logger.error(f"[{request.conversation_id}] ===== END CACHE READ DEBUG =====")
+                context = ContextResult(**cached_context)
+                scene = SceneAnalysisResult(**cached_scene)
+                
+                # Log cached conversation details
+                # Extract model info from cache metadata if available
+                cached_model = cached_context.get("_model", "unknown")
+                cached_strategy = cached_context.get("_strategy", "unknown")
+                
+                logger.info(
+                    f"[{request.conversation_id}] merge_step [CACHED|{cached_strategy}|{cached_model}] "
+                    f"Conversation: {len(context.conversation)} messages"
+                )
+                for idx, msg in enumerate(context.conversation, 1):
+                    display_content = msg.content[:100] + "..." if len(msg.content) > 100 else msg.content
+                    logger.info(
+                        f"[{request.conversation_id}]   [{idx}] {msg.speaker}: {display_content}"
+                    )
+                
+                # Reconstruct parsed_json with screenshot_parse for bbox information
+                cached_parsed_json = {
+                    "screenshot_parse": cached_screenshot_parse.get("screenshot_parse", {}) if cached_screenshot_parse else {},
+                    "conversation_analysis": {},  # Not needed for bbox reconstruction
+                    "scenario_decision": {},  # Not needed for bbox reconstruction
+                }
+
+                self._repair_merge_step_bubble_bboxes(
+                    parsed_json=cached_parsed_json,
+                    image_width=image_width,
+                    image_height=image_height,
+                )
+                
+                return context, scene, cached_parsed_json  # Return reconstructed parsed_json
+            
+            # No cache, perform merge_step analysis
+            logger.info("Performing merge_step analysis with LLM")
+            
+            # Get merge_step prompt (use active version)
+            from app.services.prompt_manager import get_prompt_manager, PromptType
+            pm = get_prompt_manager()
+            prompt = pm.get_active_prompt(PromptType.MERGE_STEP)
+            
+            if not prompt:
+                logger.error("merge_step prompt not found, falling back to separate calls")
+                raise ValueError("merge_step prompt not available")
+            
+            # Call LLM with merge_step prompt
+            from app.services.llm_adapter import create_llm_adapter, LLMCall
+            llm_adapter = create_llm_adapter()
+            
+            step_id = uuid.uuid4().hex
+            llm_start_time = time.time()
+            
+            trace_logger.log_event({
+                "level": "debug",
+                "type": "step_start",
+                "step_id": step_id,
+                "step_name": "merge_step_llm",
+                "task_type": "merge_step",
+                "session_id": request.conversation_id,
+                "user_id": request.user_id,
+            })
+            
+            # Call multimodal LLM with race strategy
+            from app.services.screenshot_parser import ScreenshotParserService
+            
+            # Get image format configuration
+            image_format = settings.llm.multimodal_image_format
+            
+            # Choose image data and type based on configuration
+            if image_format == "url":
+                image_data = image_url
+                image_type = "url"
+                logger.info(f"Using URL format for merge_step")
+            else:
+                image_data = image_base64
+                image_type = "base64"
+                logger.info(f"Using base64 format for merge_step")
+            
+            # Log prompt if enabled
+            if trace_logger.should_log_prompt():
+                trace_logger.log_event({
+                    "level": "debug",
+                    "type": "llm_prompt",
+                    "step_id": step_id,
+                    "step_name": "merge_step_llm",
+                    "task_type": "merge_step",
+                    "session_id": request.conversation_id,
+                    "user_id": request.user_id,
+                    "prompt": prompt,
+                    "image_size": f"{image_width}x{image_height}",
+                })
+            
+            # Create a temporary parser instance to use race strategy
+            from app.services.image_fetcher import ImageFetcher
+            from app.services.prompt_manager import PromptManager
+            from app.services.result_normalizer import ResultNormalizer
+            
+            temp_parser = ScreenshotParserService(
+                image_fetcher=ImageFetcher(),
+                prompt_manager=PromptManager(),
+                llm_adapter=llm_adapter,
+                result_normalizer=ResultNormalizer(),
+            )
+            
+            # Define validator for merge_step results
+            from app.services.merge_step_adapter import MergeStepAdapter
+            merge_adapter = MergeStepAdapter()
+            
+            def validate_merge_step_result(parsed_json: dict) -> bool:
+                """Check if result has valid merge_step structure."""
+                return merge_adapter.validate_merge_output(parsed_json)
+            
+            try:
+                winning_strategy, llm_result, premium_result_or_task = await temp_parser._race_multimodal_calls(
+                    prompt=prompt,
+                    image_data=image_data,
+                    image_type=image_type,
+                    mime_type="image/jpeg",
+                    user_id=request.user_id,
+                    session_id=request.conversation_id,
+                    provider=settings.llm.default_provider,
+                    validator=validate_merge_step_result,
+                    task_name="merge_step",
+                )
+                
+                # Parse JSON from winning result
+                import json
+                from app.api.v1.predict import parse_json_with_markdown
+                
+                try:
+                    parsed_json = parse_json_with_markdown(llm_result.text)
+                    raw_text = llm_result.text
+                    
+                    logger.info(f"[{__name__}:analyze_with_merge_step:L{453}] LLM raw response length: {len(llm_result.text)}")
+                    logger.info(f"[{__name__}:analyze_with_merge_step:L{454}] LLM parsed_json bubbles count: {len(parsed_json.get('screenshot_parse', {}).get('bubbles', []))}")
+                    
+                    # Log first bubble text to verify LLM output
+                    bubbles_check = parsed_json.get('screenshot_parse', {}).get('bubbles', [])
+                    if bubbles_check:
+                        first_bubble_text = bubbles_check[0].get('text', '')
+                        logger.info(f"[{__name__}:analyze_with_merge_step:L{458}] First bubble text from LLM (length={len(first_bubble_text)}): {first_bubble_text[:200]}...")
+                    
+                    logger.info(f"About to call _log_merge_step_extraction for session {request.conversation_id}")
+                    
+                    # Log extracted conversation details
+                    self._log_merge_step_extraction(
+                        session_id=request.conversation_id,
+                        strategy=winning_strategy,
+                        model=llm_result.model,
+                        parsed_json=parsed_json
+                    )
+                    
+                    logger.info(f"Finished calling _log_merge_step_extraction")
+
+                    self._repair_merge_step_bubble_bboxes(
+                        parsed_json=parsed_json,
+                        image_width=image_width,
+                        image_height=image_height,
+                    )
+                    
+                except json.JSONDecodeError as e:
+                    logger.error(f"Failed to parse JSON from merge_step: {e}")
+                    raise RuntimeError(f"Failed to parse JSON: {str(e)}")
+                
+                # Handle premium result caching in background
+                # premium_result_or_task could be:
+                # 1. A result object (if premium completed)
+                # 2. A task object (if premium is still running)
+                import asyncio
+                if isinstance(premium_result_or_task, asyncio.Task):
+                    # Premium is still running, schedule background caching
+                    logger.info(f"[{request.conversation_id}] Premium task still running, will cache in background")
+                    
+                    # Extract necessary info from request before it becomes invalid
+                    # Collect all resources to cache (same logic as _append_cache_event)
+                    resources = []
+                    if request.resources:
+                        resources.extend(request.resources)
+                    if request.resource:
+                        resources.append(request.resource)
+                    
+                    conversation_id = request.conversation_id
+                    scene_id = request.scene if hasattr(request, 'scene') else ""  # Rename to scene_id to avoid confusion
+                    cache_service = self.cache_service  # Use instance variable instead of get_cache_service()
+                    
+                    # Debug: Log the captured scene value
+                    if settings.debug_config.log_cache_operations:
+                        logger.error(f"[{conversation_id}] ===== SCENE CAPTURE DEBUG =====")
+                        logger.error(f"[{conversation_id}] Captured scene_id value: '{scene_id}' (type: {type(scene_id).__name__})")
+                        logger.error(f"[{conversation_id}] ===== END SCENE CAPTURE DEBUG =====")
+                    
+                    async def cache_premium_when_ready():
+                        try:
+                            # Add timeout protection (default: 30 seconds)
+                            timeout = getattr(settings.llm, 'premium_cache_timeout', 30.0)
+                            premium_result_tuple = await asyncio.wait_for(
+                                premium_result_or_task,
+                                timeout=timeout
+                            )
+                            # premium_result_tuple is ("premium", result) or ("premium", None)
+                            if premium_result_tuple and len(premium_result_tuple) == 2:
+                                _, premium_result = premium_result_tuple
+                            else:
+                                premium_result = None
+                                
+                            if premium_result:
+                                logger.info(f"[{conversation_id}] Background: Premium task completed, processing result")
+                                premium_parsed = parse_json_with_markdown(premium_result.text)
+                                if validate_merge_step_result(premium_parsed):
+                                    logger.info(f"[{conversation_id}] Background: Premium result is valid")
+                                    
+                                    # Extract dialogs from screenshot_parse bubbles
+                                    screenshot_data = premium_parsed.get("screenshot_parse", {})
+                                    bubbles = screenshot_data.get("bubbles", [])
+                                    
+                                    # Convert bubbles to dialog format
+                                    dialogs = []
+                                    for bubble in bubbles:
+                                        dialogs.append({
+                                            "speaker": bubble.get("sender", "user"),
+                                            "text": bubble.get("text", ""),
+                                            "timestamp": None,
+                                        })
+                                    
+                                    # Convert to ContextResult and SceneAnalysisResult
+                                    premium_context = merge_adapter.to_context_result(premium_parsed, dialogs)
+                                    premium_scene = merge_adapter.to_scene_analysis_result(premium_parsed)
+                                    
+                                    # Log premium extraction details (same as multimodal)
+                                    logger.info(f"[{conversation_id}] Background: Logging premium extraction details")
+                                    self._log_merge_step_extraction(
+                                        session_id=conversation_id,
+                                        strategy="premium",
+                                        model=premium_result.model,
+                                        parsed_json=premium_parsed
+                                    )
+                                    
+                                    # Add metadata for cache logging
+                                    premium_context_data = premium_context.model_dump()
+                                    premium_context_data["_model"] = premium_result.model
+                                    premium_context_data["_strategy"] = "premium"
+                                    
+                                    premium_scene_data = premium_scene.model_dump()
+                                    premium_scene_data["_model"] = premium_result.model
+                                    premium_scene_data["_strategy"] = "premium"
+                                    
+                                    # Cache to all resources (same logic as _append_cache_event)
+                                    if cache_service and resources:
+                                        if settings.debug_config.log_cache_operations:
+                                            logger.error(f"[{conversation_id}] ===== PREMIUM CACHE WRITE DEBUG =====")
+                                            logger.error(f"[{conversation_id}] Background: Caching premium results to {len(resources)} resource(s): {resources}")
+                                            logger.error(f"[{conversation_id}] Premium strategy=premium, model={premium_result.model}")
+                                            logger.error(f"[{conversation_id}] ===== END PREMIUM CACHE WRITE DEBUG =====")
+                                        
+                                        # Cache screenshot_parse separately for bbox information
+                                        premium_screenshot_parse_data = {
+                                            "screenshot_parse": premium_parsed.get("screenshot_parse", {}),
+                                            "_model": premium_result.model,
+                                            "_strategy": "premium",
+                                        }
+                                        
+                                        for resource in set(resources):
+                                            # Cache screenshot_parse
+                                            if settings.debug_config.log_cache_operations:
+                                                logger.error(f"[{conversation_id}] ===== PREMIUM CACHE SCENE DEBUG =====")
+                                                logger.error(f"[{conversation_id}] About to cache with scene_id='{scene_id}' (type: {type(scene_id).__name__})")
+                                                logger.error(f"[{conversation_id}] ===== END PREMIUM CACHE SCENE DEBUG =====")
+                                            logger.info(f"[{conversation_id}] Background: Caching premium screenshot_parse: session_id={conversation_id}, resource={resource}, scene={scene_id}")
+                                            await cache_service.append_event(
+                                                session_id=conversation_id,
+                                                category="screenshot_parse",
+                                                resource=resource,
+                                                payload=premium_screenshot_parse_data,
+                                                scene=scene_id
+                                            )
+                                            
+                                            # Also cache in image_result format for backward compatibility
+                                            screenshot_data = premium_parsed.get("screenshot_parse", {})
+                                            bubbles = screenshot_data.get("bubbles", [])
+                                            dialogs_for_image_result = []
+                                            for bubble in bubbles:
+                                                bbox = bubble.get("bbox", {})
+                                                dialog_item = {
+                                                    "position": [
+                                                        bbox.get("x1", 0),
+                                                        bbox.get("y1", 0),
+                                                        bbox.get("x2", 0),
+                                                        bbox.get("y2", 0),
+                                                    ],
+                                                    "text": bubble.get("text", ""),
+                                                    "speaker": bubble.get("sender", "user"),
+                                                    "from_user": (bubble.get("sender", "user") == "user"),
+                                                }
+                                                dialogs_for_image_result.append(dialog_item)
+                                            
+                                            premium_image_result_data = {
+                                                "content": resource,
+                                                "dialogs": dialogs_for_image_result,
+                                                "scenario": premium_scene.recommended_scenario,
+                                                "_model": premium_result.model,
+                                                "_strategy": "premium",
+                                            }
+                                            logger.info(f"[{conversation_id}] Background: Caching premium image_result: session_id={conversation_id}, resource={resource}, scene={scene_id}")
+                                            await cache_service.append_event(
+                                                session_id=conversation_id,
+                                                category="image_result",
+                                                resource=resource,
+                                                payload=premium_image_result_data,
+                                                scene=scene_id
+                                            )
+                                            
+                                            # Cache context_analysis
+                                            logger.info(f"[{conversation_id}] Background: Caching premium context_analysis: session_id={conversation_id}, resource={resource}, scene={scene_id}")
+                                            await cache_service.append_event(
+                                                session_id=conversation_id,
+                                                category="context_analysis",
+                                                resource=resource,
+                                                payload=premium_context_data,
+                                                scene=scene_id
+                                            )
+                                            
+                                            # Cache scene_analysis
+                                            logger.info(f"[{conversation_id}] Background: Caching premium scene_analysis: session_id={conversation_id}, resource={resource}, scene={scene_id}")
+                                            await cache_service.append_event(
+                                                session_id=conversation_id,
+                                                category="scene_analysis",
+                                                resource=resource,
+                                                payload=premium_scene_data,
+                                                scene=scene_id
+                                            )
+                                    
+                                    logger.info(f"[{conversation_id}] Background: Premium result cached successfully")
+                                else:
+                                    logger.warning(f"[{conversation_id}] Background: Premium result invalid, not caching")
+                            else:
+                                logger.warning(f"[{conversation_id}] Background: Premium result is None")
+                        except asyncio.TimeoutError:
+                            logger.warning(f"[{conversation_id}] Background: Premium task timeout after {timeout}s")
+                        except asyncio.CancelledError:
+                            logger.info(f"[{conversation_id}] Background: Premium caching cancelled")
+                        except Exception as e:
+                            logger.warning(f"[{conversation_id}] Background: Failed to cache premium result: {e}")
+                            import traceback
+                            logger.debug(f"[{conversation_id}] Background: Traceback: {traceback.format_exc()}")
+                    
+                    # Start background task with tracking
+                    background_task = asyncio.create_task(cache_premium_when_ready())
+                    logger.info(f"[{request.conversation_id}] Started background task for premium caching: task_id={id(background_task)}")
+                    self._register_background_task(
+                        background_task, 
+                        f"premium_cache_{conversation_id[:8]}"
+                    )
+                    
+                elif premium_result_or_task and premium_result_or_task != llm_result:
+                    # Premium completed and is different from winning result
+                    try:
+                        premium_parsed = parse_json_with_markdown(premium_result_or_task.text)
+                        if validate_merge_step_result(premium_parsed):
+                            logger.info(f"[{request.conversation_id}] Caching premium result for future use")
+                            
+                            # Extract dialogs from screenshot_parse bubbles
+                            screenshot_data = premium_parsed.get("screenshot_parse", {})
+                            bubbles = screenshot_data.get("bubbles", [])
+                            
+                            # Convert bubbles to dialog format
+                            dialogs = []
+                            for bubble in bubbles:
+                                dialogs.append({
+                                    "speaker": bubble.get("sender", "user"),
+                                    "text": bubble.get("text", ""),
+                                    "timestamp": None,
+                                })
+                            
+                            # Convert to ContextResult and SceneAnalysisResult
+                            premium_context = merge_adapter.to_context_result(premium_parsed, dialogs)
+                            premium_scene = merge_adapter.to_scene_analysis_result(premium_parsed)
+                            
+                            # Add metadata for cache logging
+                            premium_context_data = premium_context.model_dump()
+                            premium_context_data["_model"] = premium_result_or_task.model
+                            premium_context_data["_strategy"] = "premium"
+                            
+                            premium_scene_data = premium_scene.model_dump()
+                            premium_scene_data["_model"] = premium_result_or_task.model
+                            premium_scene_data["_strategy"] = "premium"
+                            
+                            # Cache using cache_service.append_event
+                            resource = request.resource or ""  # Use empty string if None
+                            scene = request.scene if hasattr(request, 'scene') else ""
+                            
+                            # Cache context_analysis
+                            await self.cache_service.append_event(
+                                session_id=request.conversation_id,
+                                category="context_analysis",
+                                resource=resource,
+                                payload=premium_context_data,
+                                scene=scene
+                            )
+                            
+                            # Cache scene_analysis
+                            await self.cache_service.append_event(
+                                session_id=request.conversation_id,
+                                category="scene_analysis",
+                                resource=resource,
+                                payload=premium_scene_data,
+                                scene=scene
+                            )
+                            
+                            logger.info(f"[{request.conversation_id}] Premium result cached successfully")
+                        else:
+                            logger.warning(f"[{request.conversation_id}] Premium result invalid, not caching")
+                    except Exception as e:
+                        logger.warning(f"[{request.conversation_id}] Failed to cache premium result: {e}")
+                
+            except ValueError as e:
+                # This catches the "Both calls failed" error from race strategy
+                error_msg = str(e)
+                logger.error(f"Merge_step race failed: {error_msg}")
+                raise RuntimeError(f"merge_step analysis failed: {error_msg}")
+            except RuntimeError as e:
+                error_msg = str(e)
+                # Enhanced error logging for JSON parsing failures
+                if "Failed to parse JSON" in error_msg:
+                    logger.error(
+                        f"JSON parsing failed in merge_step analysis. "
+                        f"The LLM returned invalid or incomplete JSON. "
+                        f"Details: {error_msg}. "
+                        f"Check the 'failed_json_replies/' directory for the complete raw response. "
+                        f"This may indicate: 1) LLM output was truncated, "
+                        f"2) LLM returned non-JSON text, or 3) JSON structure is malformed."
+                    )
+                raise
+            
+            llm_duration_ms = int((time.time() - llm_start_time) * 1000)
+            
+            # Log response
+            trace_logger.log_event({
+                "level": "debug",
+                "type": "step_end",
+                "step_id": step_id,
+                "step_name": "merge_step_llm",
+                "task_type": "merge_step",
+                "session_id": request.conversation_id,
+                "user_id": request.user_id,
+                "duration_ms": llm_duration_ms,
+                "provider": llm_result.provider,
+                "model": llm_result.model,
+                "cost_usd": llm_result.cost_usd,
+                "input_tokens": llm_result.input_tokens,
+                "output_tokens": llm_result.output_tokens,
+            })
+            
+            # Log response text if prompt logging is enabled
+            if trace_logger.should_log_prompt():
+                trace_logger.log_event({
+                    "level": "debug",
+                    "type": "llm_response",
+                    "step_id": step_id,
+                    "step_name": "merge_step_llm",
+                    "task_type": "merge_step",
+                    "session_id": request.conversation_id,
+                    "user_id": request.user_id,
+                    "response": raw_text[:1000] if raw_text else "",  # Truncate for log size
+                })
+            
+            logger.info(
+                f"merge_step LLM call successful: "
+                f"provider={llm_result.provider}, "
+                f"model={llm_result.model}, "
+                f"cost=${llm_result.cost_usd:.4f}, "
+                f"duration={llm_duration_ms}ms"
+            )
+            
+            # Parse and convert output using adapter
+            from app.services.merge_step_adapter import MergeStepAdapter
+            adapter = MergeStepAdapter()
+            
+            # Validate output
+            if not adapter.validate_merge_output(parsed_json):
+                raise ValueError("Invalid merge_step output structure")
+            
+            # Extract dialogs from screenshot_parse bubbles
+            screenshot_data = parsed_json.get("screenshot_parse", {})
+            bubbles = screenshot_data.get("bubbles", [])
+            # Convert bubbles to dialog format
+            dialogs = []
+            for bubble in bubbles:
+                text = bubble.get("text", "")
+                logger.info(f"[{__name__}:analyze_with_merge_step:L{713}] Bubble text: {text}")
+                dialogs.append({
+                    "speaker": bubble.get("sender", "user"),
+                    "text": text,
+                    "timestamp": None,
+                })
+            
+            logger.info(f"Extracted {len(dialogs)} dialogs from screenshot_parse bubbles")
+            
+            # Convert to ContextResult
+            context = adapter.to_context_result(parsed_json, dialogs)
+            
+            # Convert to SceneAnalysisResult (without strategies yet)
+            scene = adapter.to_scene_analysis_result(parsed_json)
+            
+            # Ensure scene has exactly 3 strategies
+            self._ensure_three_strategies(scene)
+            
+            logger.info(
+                f"Ensured 3 strategies for scenario '{scene.recommended_scenario}': {scene.recommended_strategies}"
+            )
+            
+            # Cache results using traditional field names for cache sharing
+            # Add metadata for cache logging
+            context_data = context.model_dump(mode="json")
+            context_data["_model"] = llm_result.model
+            context_data["_strategy"] = winning_strategy
+            
+            scene_data = scene.model_dump(mode="json")
+            scene_data["_model"] = llm_result.model
+            scene_data["_strategy"] = winning_strategy
+            
+            if settings.debug_config.log_cache_operations:
+                logger.error(f"[{request.conversation_id}] ===== MULTIMODAL CACHE WRITE DEBUG =====")
+                logger.error(f"[{request.conversation_id}] About to cache {winning_strategy} results: resource={request.resource}, resources={request.resources}, scene={request.scene}")
+                logger.error(f"[{request.conversation_id}] Multimodal strategy={winning_strategy}, model={llm_result.model}")
+                logger.error(f"[{request.conversation_id}] ===== END MULTIMODAL CACHE WRITE DEBUG =====")
+            
+            # Cache screenshot_parse separately for bbox information
+            screenshot_parse_data = {
+                "screenshot_parse": parsed_json.get("screenshot_parse", {}),
+                "_model": llm_result.model,
+                "_strategy": winning_strategy,
+            }
+            await self._append_cache_event(
+                request,
+                "screenshot_parse",
+                screenshot_parse_data
+            )
+            
+            # Also cache in image_result format for backward compatibility with non-merge_step
+            # Convert screenshot_parse bubbles to ImageResult dialogs format
+            from app.models.v1_api import DialogItem
+            screenshot_data = parsed_json.get("screenshot_parse", {})
+            bubbles = screenshot_data.get("bubbles", [])
+            dialogs_for_image_result = []
+            for bubble in bubbles:
+                bbox = bubble.get("bbox", {})
+                dialog_item = {
+                    "position": [
+                        bbox.get("x1", 0),
+                        bbox.get("y1", 0),
+                        bbox.get("x2", 0),
+                        bbox.get("y2", 0),
+                    ],
+                    "text": bubble.get("text", ""),
+                    "speaker": bubble.get("sender", "user"),
+                    "from_user": (bubble.get("sender", "user") == "user"),
+                }
+                dialogs_for_image_result.append(dialog_item)
+            
+            image_result_data = {
+                "content": request.resource or (request.resources[0] if request.resources else ""),
+                "dialogs": dialogs_for_image_result,
+                "scenario": scene.recommended_scenario,
+                "_model": llm_result.model,
+                "_strategy": winning_strategy,
+            }
+            await self._append_cache_event(
+                request,
+                "image_result",
+                image_result_data
+            )
+            logger.info(f"[{request.conversation_id}] Cached {winning_strategy} image_result for backward compatibility")
+            
+            await self._append_cache_event(
+                request,
+                "context_analysis",  # Use traditional field name
+                context_data
+            )
+            logger.info(f"[{request.conversation_id}] Cached {winning_strategy} context_analysis: session_id={request.conversation_id}, resource={request.resource}, scene={request.scene}")
+            await self._append_cache_event(
+                request,
+                "scene_analysis",  # Use traditional field name
+                scene_data
+            )
+            logger.info(f"[{request.conversation_id}] Cached {winning_strategy} scene_analysis: session_id={request.conversation_id}, resource={request.resource}, scene={request.scene}")
+            
+            logger.info("merge_step analysis completed and cached")
+            
+            return context, scene, parsed_json  # Return raw parsed_json for bbox extraction
+            
+        except Exception as e:
+            logger.exception(f"merge_step analysis error: {e}")
+            raise OrchestrationError(
+                message="An error occurred during merge_step analysis",
                 original_error=e,
             ) from e
 
@@ -220,6 +1041,7 @@ class Orchestrator:
             cached_context = await self._get_cached_payload(request, "context_analysis")
             if cached_context:
                 context = ContextResult(**cached_context)
+                logger.info(f"[{request.conversation_id}] Using cached context_analysis")
             else:
                 context = await self._execute_step(
                     exec_ctx,
@@ -227,21 +1049,30 @@ class Orchestrator:
                     self._build_context,
                     request,
                 )
-                await self._append_cache_event(request, "context_analysis", context.model_dump(mode="json"))
+                # Add metadata for consistency with merge_step cache
+                context_data = context.model_dump(mode="json")
+                context_data["_model"] = "non-merge-step"
+                context_data["_strategy"] = "traditional"
+                await self._append_cache_event(request, "context_analysis", context_data)
             
-            # Step 2: Analyze scene (传递 context 以获取当前亲密度)
+            # Step 2: Analyze scene (传context 以获取当前亲密度)
             cached_scene = await self._get_cached_payload(request, "scene_analysis")
             if cached_scene:
                 scene = SceneAnalysisResult(**cached_scene)
+                logger.info(f"[{request.conversation_id}] Using cached scene_analysis")
             else:
                 scene = await self._execute_step(
                     exec_ctx,
                     "scene_analysis",
                     self._analyze_scene,
                     request,
-                    context,  # 传递 context
+                    context,  # 传context
                 )
-                await self._append_cache_event(request, "scene_analysis", scene.model_dump(mode="json"))
+                # Add metadata for consistency with merge_step cache
+                scene_data = scene.model_dump(mode="json")
+                scene_data["_model"] = "non-merge-step"
+                scene_data["_strategy"] = "traditional"
+                await self._append_cache_event(request, "scene_analysis", scene_data)
             
             # Step 3: Infer persona
             cached_persona = None
@@ -262,7 +1093,9 @@ class Orchestrator:
             
             # Phase 2: Step 3.5: Plan strategies (optional, if strategy_planner available)
             strategy_plan = None
-            if self.strategy_planner:
+            if settings.no_strategy_planner:
+                strategy_plan = None
+            elif self.strategy_planner:
                 cached_strategy = await self._get_cached_payload(request, "strategy_plan")
                 if cached_strategy:
                     from app.services.strategy_planner import StrategyPlanOutput
@@ -301,8 +1134,8 @@ class Orchestrator:
     ) -> GenerateReplyResponse:
         """Generate a reply by orchestrating all sub-modules.
         
-        Flow: Context_Builder → Scene_Analysis → Persona_Inference → 
-              Reply_Generation → Intimacy_Check
+        Flow: Context_Builder Scene_Analysis Persona_Inference 
+              Reply_Generation Intimacy_Check
         
         Args:
             request: The generation request with user/conversation info.
@@ -336,6 +1169,7 @@ class Orchestrator:
             cached_context = await self._get_cached_payload(request, "context_analysis")
             if cached_context:
                 context = ContextResult(**cached_context)
+                logger.info(f"[{request.conversation_id}] Using cached context_analysis")
             else:
                 context = await self._execute_step(
                     exec_ctx,
@@ -343,21 +1177,30 @@ class Orchestrator:
                     self._build_context,
                     request,
                 )
-                await self._append_cache_event(request, "context_analysis", context.model_dump(mode="json"))
+                # Add metadata for consistency with merge_step cache
+                context_data = context.model_dump(mode="json")
+                context_data["_model"] = "non-merge-step"
+                context_data["_strategy"] = "traditional"
+                await self._append_cache_event(request, "context_analysis", context_data)
             
-            # Step 2: Analyze scene (传递 context 以获取当前亲密度)
+            # Step 2: Analyze scene (传context 以获取当前亲密度)
             cached_scene = await self._get_cached_payload(request, "scene_analysis")
             if cached_scene:
                 scene = SceneAnalysisResult(**cached_scene)
+                logger.info(f"[{request.conversation_id}] Using cached scene_analysis")
             else:
                 scene = await self._execute_step(
                     exec_ctx,
                     "scene_analysis",
                     self._analyze_scene,
                     request,
-                    context,  # 传递 context
+                    context,  # 传context
                 )
-                await self._append_cache_event(request, "scene_analysis", scene.model_dump(mode="json"))
+                # Add metadata for consistency with merge_step cache
+                scene_data = scene.model_dump(mode="json")
+                scene_data["_model"] = "non-merge-step"
+                scene_data["_strategy"] = "traditional"
+                await self._append_cache_event(request, "scene_analysis", scene_data)
             
             # Step 3: Infer persona
             cached_persona = None
@@ -614,6 +1457,54 @@ class Orchestrator:
                 conversation_id=request.conversation_id,
             ) from e
 
+    def _ensure_three_strategies(self, scene: SceneAnalysisResult) -> None:
+        """Ensure scene has exactly 3 recommended strategies.
+        
+        If strategies are missing or insufficient, select random strategies
+        based on the recommended_scenario. If the scenario has fewer than 3
+        strategies, pad with SAFE strategies.
+        
+        Args:
+            scene: SceneAnalysisResult to update (modified in place)
+        """
+        from app.services.strategy_selector import get_strategy_selector
+        
+        # Check if we already have 3 or more strategies
+        if scene.recommended_strategies and len(scene.recommended_strategies) >= 3:
+            # Ensure exactly 3 strategies (trim if more than 3)
+            scene.recommended_strategies = scene.recommended_strategies[:3]
+            logger.debug(
+                f"Scene already has 3 strategies: {scene.recommended_strategies}"
+            )
+            return
+        
+        strategy_selector = get_strategy_selector()
+        
+        # Select strategies based on recommended_scenario
+        selected_strategies = strategy_selector.select_strategies(
+            scenario=scene.recommended_scenario,
+            count=3
+        )
+        
+        # If we still don't have 3 strategies (edge case), pad with SAFE strategies
+        if len(selected_strategies) < 3:
+            logger.warning(
+                f"Only {len(selected_strategies)} strategies available for scenario "
+                f"'{scene.recommended_scenario}', padding with SAFE strategies"
+            )
+            safe_strategies = strategy_selector.select_strategies(
+                scenario="SAFE",
+                count=3 - len(selected_strategies)
+            )
+            selected_strategies.extend(safe_strategies)
+        
+        # Ensure exactly 3 strategies
+        scene.recommended_strategies = selected_strategies[:3]
+        
+        logger.info(
+            f"Filled strategies for scenario '{scene.recommended_scenario}': {scene.recommended_strategies}"
+        )
+
     async def _analyze_scene(
         self, 
         request: GenerateReplyRequest,
@@ -626,7 +1517,7 @@ class Orchestrator:
             context: Context result with current intimacy level.
         
         Returns:
-            SceneAnalysisResult from scene analyzer.
+            SceneAnalysisResult from scene analyzer with 3 strategies.
         """
         input_data = SceneAnalysisInput(
             conversation_id=request.conversation_id,
@@ -636,7 +1527,12 @@ class Orchestrator:
             intimacy_value=request.intimacy_value,  # 用户设置的亲密度
             current_intimacy_level=context.current_intimacy_level,  # 当前分析的亲密度
         )
-        return await self.scene_analyzer.analyze_scene(input_data)
+        scene = await self.scene_analyzer.analyze_scene(input_data)
+        
+        # Ensure scene has exactly 3 strategies
+        self._ensure_three_strategies(scene)
+        
+        return scene
 
     async def _infer_persona(
         self,
@@ -677,6 +1573,9 @@ class Orchestrator:
         Returns:
             Strategy plan output
         """
+        if settings.no_strategy_planner:
+            return None
+
         from app.services.strategy_planner import StrategyPlanInput
         
         input_data = StrategyPlanInput(
@@ -715,6 +1614,12 @@ class Orchestrator:
         Requirements: 2.3, 2.4, 4.2
         """
         quality = self._get_effective_quality(exec_ctx, request.quality)
+        
+        # Force premium quality for reply generation
+        # Override to use more expensive/better models
+        quality = "premium"  # Use premium quality models for better replies
+        logger.info(f"Using premium quality model for reply generation")
+        
         last_reply_result = None
         last_intimacy_result = None
 
@@ -774,6 +1679,7 @@ class Orchestrator:
                     scene=scene,
                     persona=persona,
                     language=request.language,  # 传递语言参数
+                    reply_sentence=getattr(request, "reply_sentence", ""),  # 新增：传reply_sentence
                 )
                 reply_result = await self._execute_step(
                     exec_ctx,
@@ -1002,6 +1908,12 @@ class Orchestrator:
             resource_key = request.resource or (request.resources[0] if request.resources else None)
             if not resource_key:
                 return None
+            
+            if settings.debug_config.log_cache_operations:
+                logger.error(f"[{request.conversation_id}] ===== CACHE READ ATTEMPT =====")
+                logger.error(f"[{request.conversation_id}] Reading cache for category={category}, resource_key={resource_key}, scene={request.scene}")
+                logger.error(f"[{request.conversation_id}] request.resource={request.resource}, request.resources={request.resources}")
+                logger.error(f"[{request.conversation_id}] ===== END CACHE READ ATTEMPT =====")
                 
             cached_event = await self.cache_service.get_resource_category_last(
                 session_id=request.conversation_id,
@@ -1013,6 +1925,11 @@ class Orchestrator:
                 payload = cached_event.get("payload")
                 if isinstance(payload, dict):
                     logger.info(f"Cache hit for category={category}, resource={resource_key}")
+                    if settings.debug_config.log_cache_operations:
+                        logger.error(f"[{request.conversation_id}] ===== CACHE HIT DETAILS =====")
+                        logger.error(f"[{request.conversation_id}] Cache hit: category={category}, resource={resource_key}")
+                        logger.error(f"[{request.conversation_id}] Cached strategy={payload.get('_strategy')}, model={payload.get('_model')}")
+                        logger.error(f"[{request.conversation_id}] ===== END CACHE HIT DETAILS =====")
                     return payload
         except Exception as exc:
             logger.warning("Cache read failed for category=%s: %s", category, exc)
@@ -1020,6 +1937,7 @@ class Orchestrator:
 
     async def _append_cache_event(self, request: GenerateReplyRequest, category: str, payload: dict) -> None:
         if self.cache_service is None or (not request.resource and not request.resources):
+            logger.info(f"[{request.conversation_id}] Skipping cache: cache_service={self.cache_service is not None}, resource={request.resource}, resources={request.resources}")
             return
         try:
             resources = []
@@ -1027,6 +1945,8 @@ class Orchestrator:
                 resources.extend(request.resources)
             if request.resource:
                 resources.append(request.resource)
+            
+            logger.info(f"[{request.conversation_id}] Caching to resources: {resources}")
 
             for r in set(resources):
                 await self.cache_service.append_event(
@@ -1038,3 +1958,65 @@ class Orchestrator:
                 )
         except Exception as exc:
             logger.warning("Cache append failed for category=%s: %s", category, exc)
+
+    def _register_background_task(self, task: asyncio.Task, task_name: str = "unknown") -> None:
+        """Register a background task for tracking and cleanup.
+        
+        Args:
+            task: The asyncio Task to register
+            task_name: Human-readable name for logging
+        """
+        self._background_tasks.append(task)
+        logger.debug(f"Registered background task: {task_name} (total: {len(self._background_tasks)})")
+        
+        # Add callback to remove completed tasks
+        def on_task_done(t: asyncio.Task):
+            try:
+                self._background_tasks.remove(t)
+                logger.debug(f"Background task completed: {task_name} (remaining: {len(self._background_tasks)})")
+            except ValueError:
+                pass  # Task already removed
+        
+        task.add_done_callback(on_task_done)
+    
+    async def shutdown(self, timeout: float = 30.0) -> None:
+        """Gracefully shutdown the orchestrator and wait for background tasks.
+        
+        Args:
+            timeout: Maximum time to wait for background tasks (seconds)
+        """
+        logger.info(f"Orchestrator shutdown initiated. Waiting for {len(self._background_tasks)} background tasks...")
+        self._shutdown_event.set()
+        
+        if not self._background_tasks:
+            logger.info("No background tasks to wait for")
+            return
+        
+        try:
+            # Wait for all background tasks with timeout
+            await asyncio.wait_for(
+                asyncio.gather(*self._background_tasks, return_exceptions=True),
+                timeout=timeout
+            )
+            logger.info("All background tasks completed successfully")
+        except asyncio.TimeoutError:
+            logger.warning(f"Background tasks did not complete within {timeout}s, cancelling...")
+            # Cancel remaining tasks
+            for task in self._background_tasks:
+                if not task.done():
+                    task.cancel()
+            # Wait a bit for cancellation to propagate
+            await asyncio.gather(*self._background_tasks, return_exceptions=True)
+            logger.info("Background tasks cancelled")
+        except Exception as e:
+            logger.error(f"Error during shutdown: {e}")
+    
+    def get_background_task_count(self) -> int:
+        """Get the number of active background tasks.
+        
+        Returns:
+            Number of active background tasks
+        """
+        return len(self._background_tasks)
+
+
